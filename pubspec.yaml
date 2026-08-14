@@ -37,6 +37,14 @@ dependencies:
   provider: ^6.1.5+1
   shared_preferences: ^2.5.5
   http: ^1.6.0
+  file_picker: ^8.1.2
+  desktop_drop: ^0.5.0
+  cross_file: ^0.3.4
+  http_parser: ^4.0.2
+  video_player: ^2.9.2
+  syncfusion_flutter_pdfviewer: ^27.1.58
+  url_launcher: ^6.3.1
+  youtube_player_iframe: ^5.2.0
 
 dev_dependencies:
   flutter_test:
