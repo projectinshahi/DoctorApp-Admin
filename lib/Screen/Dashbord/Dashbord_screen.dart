@@ -2,10 +2,12 @@ import 'package:admin_drapp/Screen/Dashbord/student_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/const/api_constant.dart';
 import '../../core/const/responsive_const.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../provider/course_provider.dart';
 import '../../provider/admin_student_provider.dart';
+import '../QuestionBank/question_bank_screen.dart';
 import 'add_course_screen.dart';
 import 'course_list_screen.dart';
 
@@ -77,7 +79,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       NavItem(Icons.menu_book_outlined, "Courses"),
       NavItem(Icons.add_box_outlined, "Add course"),
       NavItem(Icons.videocam_outlined, "Videos"),
-      NavItem(Icons.help_outline_rounded, "Question bank"),
+      NavItem(Icons.help_outline_rounded, "Question Bank"),
       NavItem(Icons.assignment_outlined, "Quizzes"),
     ]),
     NavSection("people", [
@@ -111,6 +113,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           _selected,
           style: const TextStyle(fontWeight: FontWeight.w800, color: LmsColors.textDark),
         ),
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Center(child: ApiEnvironmentChip()),
+          ),
+        ],
       )
           : null,
       drawer: isMobile
@@ -137,20 +145,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ),
                     child: _TopBar(title: _selected),
                   ),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: EdgeInsets.fromLTRB(
-                      LmsResponsive.value(context, mobile: 16, tablet: 24, desktop: 32),
-                      isMobile ? 20 : 0,
-                      LmsResponsive.value(context, mobile: 16, tablet: 24, desktop: 32),
-                      40,
-                    ),
-                    child: LmsResponsiveCenter(
-                      maxWidth: 1100,
-                      child: _buildMainContent(),
+                if (_selected == "Question Bank")
+                  const Expanded(child: QuestionBankScreen())
+                else
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                        LmsResponsive.value(context, mobile: 16, tablet: 24, desktop: 32),
+                        isMobile ? 20 : 0,
+                        LmsResponsive.value(context, mobile: 16, tablet: 24, desktop: 32),
+                        40,
+                      ),
+                      child: LmsResponsiveCenter(
+                        maxWidth: 1100,
+                        child: _buildMainContent(),
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ),
@@ -345,6 +356,8 @@ class _TopBar extends StatelessWidget {
             ),
           ),
         ),
+        const ApiEnvironmentChip(),
+        const SizedBox(width: 12),
         CircleAvatar(
           radius: 20,
           backgroundColor: LmsColors.border,
@@ -521,6 +534,46 @@ class _CommentRow extends StatelessWidget {
           TextSpan(text: "${comment.author} ", style: const TextStyle(fontWeight: FontWeight.w800)),
           TextSpan(text: "— \"${comment.snippet}\"", style: const TextStyle(fontWeight: FontWeight.w400, color: LmsColors.textDark)),
         ],
+      ),
+    );
+  }
+}
+
+/// Shows which backend the app is talking to, but only when it isn't the
+/// deployed one. Silent in production so the normal UI stays clean; visible
+/// the moment you point at localhost, so local data is never mistaken for
+/// real data.
+class ApiEnvironmentChip extends StatelessWidget {
+  const ApiEnvironmentChip({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (ApiConstant.isProduction) return const SizedBox.shrink();
+
+    return Tooltip(
+      message: 'API base URL: ${ApiConstant.root}',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.orange.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.dns_outlined, size: 13, color: Colors.orange),
+            const SizedBox(width: 5),
+            Text(
+              ApiConstant.environmentLabel,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+                color: Colors.orange,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

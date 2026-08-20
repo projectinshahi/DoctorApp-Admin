@@ -4,10 +4,11 @@ import 'package:http/http.dart' as http;
 
 import '../core/const/local_storegae.dart';
 import '../models/panal_model.dart';
+import '../core/const/api_constant.dart';
 
 
 class AdminPlanService {
-  static const String _baseUrl = 'http://10.0.2.2:3000/api';
+  static const String _baseUrl = ApiConstant.baseUrl;
 
   Future<List<AdminPlanModel>> getPlansForCourse(int courseId) async {
     final response = await http.get(

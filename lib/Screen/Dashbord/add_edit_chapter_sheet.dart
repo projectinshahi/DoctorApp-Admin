@@ -128,7 +128,7 @@ class _AddEditChapterSheetState extends State<_AddEditChapterSheet> {
               ),
               const SizedBox(height: 20),
               const Text(
-                'Chapter Title',
+                'Syllabus Title',
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
@@ -186,7 +186,7 @@ class _AddEditChapterSheetState extends State<_AddEditChapterSheet> {
                     child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
                   )
                       : Text(
-                    _isEditMode ? 'Save Changes' : 'Add Chapter',
+                    _isEditMode ? 'Save Changes' : 'Add Syllabus',
                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                   ),
                 ),

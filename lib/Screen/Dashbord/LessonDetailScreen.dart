@@ -9,12 +9,18 @@ import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../provider/lesson_details_provider.dart';
-import '../../provider/lessoedit_provider.dart';
+import '../../services/lesson_services.dart';
 import '../../provider/lesson_upload_provider.dart';
-import '../../services/lesson_services.dart' hide LessonAccessType, LessonType; // 👈 add this — defines LessonType, LessonAccessType, and the apiValue extension
 import '../../widget/note_web_viewer_stub.dart'
 if (dart.library.html) '../../widget/note_web_viewer_web.dart';
+import '../../models/panal_model.dart';
+import '../../provider/admin_plan_provider.dart';
+import '../../services/admin_plan_services.dart';
 import 'add_edit_lesson_sheet.dart';
+import 'add_edit_plan_sheet.dart';
+import 'lesson_subscription_sheet.dart';
+import 'lesson_badges.dart';
+import '../../widget/breadcrumb_widget.dart';
 
 
 class LessonDetailScreen extends StatelessWidget {
@@ -26,7 +32,7 @@ class LessonDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => LessonDetailsProvider()..loadLesson(lessonId)),
+        ChangeNotifierProvider(create: (_) => LessonDetailsProvider()..loadLesson(lessonId, includeChapter: true)),
         ChangeNotifierProvider(create: (_) => LessonUpdateProvider()),
       ],
       child: const _LessonDetailBody(),
@@ -51,6 +57,42 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
   int? _initializedForLessonId;
   Timer? _youtubeTimeoutTimer;
   bool _videoStarted = false; // NEW — controls when the thumbnail poster gets replaced
+
+  /// Every plan sold on this lesson's course, so the subscription section can
+  /// show the full ladder - not just the one plan attached to the lesson.
+  List<AdminPlanModel> _coursePlans = [];
+  bool _plansLoading = false;
+  String? _plansError;
+  int? _plansLoadedForCourseId;
+  int? _deletingPlanId;
+
+  void _ensureCoursePlans(int? courseId, {bool force = false}) {
+    if (courseId == null) return;
+    if (!force && _plansLoadedForCourseId == courseId) return;
+    _plansLoadedForCourseId = courseId;
+
+    // Called from build(), so never setState synchronously.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _plansLoading) return;
+      setState(() {
+        _plansLoading = true;
+        _plansError = null;
+      });
+      AdminPlanService().getPlansForCourse(courseId).then((plans) {
+        if (!mounted) return;
+        setState(() {
+          _coursePlans = plans;
+          _plansLoading = false;
+        });
+      }).catchError((e) {
+        if (!mounted) return;
+        setState(() {
+          _plansError = 'Could not load the course plans.';
+          _plansLoading = false;
+        });
+      });
+    });
+  }
 
   bool _isYoutubeUrl(String url) {
     final lower = url.toLowerCase();
@@ -143,6 +185,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     final updated = await showAddEditLessonSheet(
       context,
       chapterId: lesson.chapterId,
+      courseId: lesson.chapter?.courseId, // NEW
       lessonId: lesson.id,
       initialTitle: lesson.title,
       initialDescription: lesson.description,
@@ -154,16 +197,115 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
       initialNoteUrl: lesson.noteUrl,
       initialNotePublicId: lesson.notePublicId,
       initialNoteFileType: lesson.noteFileType,
-      initialContent: lesson.content,
+      initialContent: lesson.content, // legacy reference, read-only
+      initialQuizId: lesson.quizId,
       initialIsFreePreview: lesson.isFreePreview,
       initialAccessType: lesson.accessTypeEnum,
+      initialStatus: lesson.statusEnum,
+      initialPlanIds: lesson.planIds, // NEW
+      initialPlans: lesson.plans, // NEW
       initialDisplayOrder: lesson.displayOrder,
     );
 
     if (updated == true && context.mounted) {
       setState(_resetVideoState);
-      await context.read<LessonDetailsProvider>().loadLesson(lesson.id);
+      await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
     }
+  }
+
+  /// Access + plans only. Same sheet the chapter lesson list opens, so the
+  /// two screens can't drift apart.
+  Future<void> _openSubscriptionSheet(BuildContext context, LessonDetail lesson) async {
+    final courseId = lesson.chapter?.courseId;
+    if (courseId == null) {
+      _showSnack(context, 'Course not known for this lesson - use Edit lesson.', isError: true);
+      return;
+    }
+
+    final saved = await showLessonSubscriptionSheet(
+      context,
+      courseId: courseId,
+      chapterId: lesson.chapterId,
+      lessonId: lesson.id,
+      lessonTitle: lesson.title,
+      accessType: lesson.accessTypeEnum,
+      planIds: lesson.planIds,
+      isFreePreview: lesson.isFreePreview,
+      attachedPlans: lesson.plans,
+    );
+
+    if (saved != true || !context.mounted) return;
+    _showSnack(context, 'Subscription updated');
+    _ensureCoursePlans(courseId, force: true);
+    await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
+  }
+
+  /// Edit one plan in place from the subscription list.
+  Future<void> _editPlan(BuildContext context, LessonDetail lesson, _PlanRow row) async {
+    final courseId = lesson.chapter?.courseId;
+    if (courseId == null) return;
+
+    final saved = await showAddEditPlanSheet(
+      context,
+      courseId: courseId,
+      existingPlan: AdminPlanModel(
+        id: row.id,
+        courseId: courseId,
+        title: row.title,
+        description: row.description,
+        price: row.price,
+        durationDays: row.durationDays,
+        isActive: row.isActive,
+      ),
+    );
+    if (saved == null || !context.mounted) return;
+    _showSnack(context, 'Plan updated');
+    _ensureCoursePlans(courseId, force: true);
+    await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
+  }
+
+  /// Delete a plan from the course. It disappears from every lesson that used
+  /// it, so the confirmation says as much.
+  Future<void> _deletePlan(BuildContext context, LessonDetail lesson, _PlanRow row) async {
+    final courseId = lesson.chapter?.courseId;
+    if (courseId == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Delete plan?'),
+        content: Text(
+          row.isRequired
+              ? '"${row.title}" unlocks this lesson. Deleting it removes the plan from the '
+                  'whole course and students on it lose access. This cannot be undone.'
+              : 'This permanently deletes "${row.title}" from the course. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: LmsColors.error),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    setState(() => _deletingPlanId = row.id);
+    final provider = AdminPlanProvider();
+    final ok = await provider.deletePlan(courseId: courseId, planId: row.id);
+    if (!context.mounted) return;
+    setState(() => _deletingPlanId = null);
+
+    if (!ok) {
+      _showSnack(context, provider.deleteErrorMessage ?? 'Failed to delete plan', isError: true);
+      return;
+    }
+    _showSnack(context, 'Plan deleted');
+    _ensureCoursePlans(courseId, force: true);
+    await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
   }
 
   void _showSnack(BuildContext context, String message, {bool isError = false}) {
@@ -216,7 +358,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     if (updated) {
       _showSnack(context, 'Video removed');
       setState(_resetVideoState);
-      await context.read<LessonDetailsProvider>().loadLesson(lesson.id);
+      await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
     } else {
       _showSnack(context, updateProvider.errorMessage ?? 'Failed to remove video', isError: true);
     }
@@ -260,7 +402,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     if (!context.mounted) return;
     if (updated) {
       _showSnack(context, 'Note removed');
-      await context.read<LessonDetailsProvider>().loadLesson(lesson.id);
+      await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
     } else {
       _showSnack(context, updateProvider.errorMessage ?? 'Failed to remove note', isError: true);
     }
@@ -571,8 +713,541 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     );
   }
 
+  // ── Subscription & access ──────────────────────────────────────────
+  // Replaces the old single amber card. A free lesson gets a one-line green
+  // strip; a premium lesson gets the unlock rule plus every plan sold on the
+  // course, with the ones that unlock this lesson marked.
+
+  Widget _buildSubscriptionSection(BuildContext context, LessonDetail lesson) {
+    final isPremium = lesson.accessTypeEnum == LessonAccessType.premium;
+
+    if (!isPremium) return _buildFreeAccessStrip(context, lesson);
+
+    final requiredIds = lesson.requiredPlanIds;
+
+    // Course plans first (they carry the description); then any attached plan
+    // the course list didn't return, so a stale/failed fetch never hides the
+    // plan this lesson actually needs.
+    final rows = <_PlanRow>[
+      for (final p in _coursePlans)
+        _PlanRow(
+          id: p.id,
+          title: p.title,
+          description: p.description,
+          price: p.price,
+          durationDays: p.durationDays,
+          isActive: p.isActive,
+          isRequired: requiredIds.contains(p.id),
+        ),
+    ];
+    for (final p in lesson.plans) {
+      if (rows.any((r) => r.id == p.id)) continue;
+      rows.add(_PlanRow(
+        id: p.id,
+        title: p.title,
+        price: p.price,
+        durationDays: p.durationDays,
+        isActive: p.isActive,
+        isRequired: true,
+      ));
+    }
+
+    // Required plans on top, then cheapest first.
+    rows.sort((a, b) => a.isRequired == b.isRequired
+        ? a.price.compareTo(b.price)
+        : (a.isRequired ? -1 : 1));
+
+    final requiredCount = rows.where((r) => r.isRequired).length;
+    final anySubscription = requiredIds.isEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 17,
+                decoration: BoxDecoration(color: kPremiumColor, borderRadius: BorderRadius.circular(3)),
+              ),
+              const SizedBox(width: 9),
+              const Text(
+                'Subscription & Access',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: LmsColors.textDark),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => _openSubscriptionSheet(context, lesson),
+                icon: const Icon(Icons.tune_rounded, size: 15),
+                label: const Text('Manage', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+                style: TextButton.styleFrom(
+                  foregroundColor: kPremiumColor,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        _buildUnlockRuleCard(
+          anySubscription: anySubscription,
+          rows: rows,
+          requiredCount: requiredCount,
+        ),
+
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 20, 18, 10),
+          child: Row(
+            children: [
+              Text(
+                'PLANS ON THIS COURSE',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                  color: LmsColors.textGrey.withOpacity(0.9),
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (rows.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1.5),
+                  decoration: BoxDecoration(
+                    color: LmsColors.border,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${rows.length}',
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: LmsColors.textGrey),
+                  ),
+                ),
+              const Spacer(),
+              if (_plansLoading)
+                const SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(strokeWidth: 1.8, color: kPremiumColor),
+                ),
+            ],
+          ),
+        ),
+
+        if (_plansError != null)
+          _buildPlansError(lesson)
+        else if (rows.isEmpty && !_plansLoading)
+          _buildNoPlansCard(context, lesson)
+        else
+          ...rows.map(
+            (r) => _buildPlanTile(
+              context,
+              lesson,
+              r,
+              unlockedByAny: anySubscription,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Green one-liner: nothing to explain when the lesson is open to everyone,
+  /// but it still needs a way in to switch the lesson to premium.
+  Widget _buildFreeAccessStrip(BuildContext context, LessonDetail lesson) {
+    final preview = lesson.isFreePreview;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: LmsColors.success.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: LmsColors.success.withOpacity(0.22)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: LmsColors.success.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(
+              preview ? Icons.visibility_outlined : Icons.lock_open_rounded,
+              size: 16,
+              color: LmsColors.success,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              preview
+                  ? 'Free preview - visible to every student, no subscription needed.'
+                  : 'Free lesson - no subscription needed.',
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: LmsColors.textDark,
+                height: 1.4,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _openSubscriptionSheet(context, lesson),
+            style: TextButton.styleFrom(
+              foregroundColor: LmsColors.success,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Change', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The headline: what a student must hold to open this lesson.
+  Widget _buildUnlockRuleCard({
+    required bool anySubscription,
+    required List<_PlanRow> rows,
+    required int requiredCount,
+  }) {
+    final required = rows.where((r) => r.isRequired).toList();
+    final headline = anySubscription
+        ? 'Any active subscription'
+        : required.isEmpty
+            ? 'Loading plan...'
+            : required.map((r) => r.title).join('  •  ');
+
+    final subline = anySubscription
+        ? rows.isEmpty
+            ? 'Unlocked by any plan the student holds for this course.'
+            : 'Unlocked by any of the ${rows.length} plans below.'
+        : requiredCount > 1
+            ? 'Unlocked by any one of these $requiredCount plans.'
+            : 'Only this plan unlocks the lesson.';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF3B2F16), Color(0xFF1F1B12)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(color: kPremiumColor.withOpacity(0.20), blurRadius: 22, offset: const Offset(0, 10)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.workspace_premium_rounded, size: 15, color: Color(0xFFF5C86B)),
+              const SizedBox(width: 7),
+              Text(
+                'UNLOCK RULE',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.9,
+                  color: const Color(0xFFF5C86B).withOpacity(0.85),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            headline,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: -0.3,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subline,
+            style: TextStyle(fontSize: 12.5, color: Colors.white.withOpacity(0.62), height: 1.45),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One plan in the course ladder. Amber and ticked when it unlocks this
+  /// lesson, muted otherwise.
+  Widget _buildPlanTile(
+    BuildContext context,
+    LessonDetail lesson,
+    _PlanRow row, {
+    required bool unlockedByAny,
+  }) {
+    final unlocks = row.isRequired || unlockedByAny;
+    final isDeleting = _deletingPlanId == row.id;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: unlocks ? const Color(0xFFFFFBF2) : LmsColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: unlocks ? kPremiumColor.withOpacity(0.35) : LmsColors.border,
+          width: unlocks ? 1.3 : 1,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: unlocks ? kPremiumColor.withOpacity(0.14) : LmsColors.bg,
+              shape: BoxShape.circle,
+              border: unlocks ? null : Border.all(color: LmsColors.border),
+            ),
+            child: Icon(
+              unlocks ? Icons.check_rounded : Icons.lock_outline_rounded,
+              size: 16,
+              color: unlocks ? kPremiumColor : LmsColors.textGrey,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        row.title,
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                          color: unlocks ? LmsColors.textDark : LmsColors.textGrey,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                    ),
+                    if (!row.isActive) ...[
+                      const SizedBox(width: 8),
+                      _tag('INACTIVE', LmsColors.error),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Row(
+                  children: [
+                    Text(
+                      'AED ${row.price.toStringAsFixed(0)}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: unlocks ? kPremiumColor : LmsColors.textGrey,
+                      ),
+                    ),
+                    const Text('  ·  ', style: TextStyle(color: LmsColors.textGrey)),
+                    Text(
+                      '${row.durationDays} days',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: LmsColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+                if (row.description != null && row.description!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  Text(
+                    row.description!.trim(),
+                    style: const TextStyle(fontSize: 12, color: LmsColors.textGrey, height: 1.45),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _tag(
+                row.isRequired
+                    ? 'REQUIRED'
+                    : unlockedByAny
+                        ? 'UNLOCKS'
+                        : 'NOT LINKED',
+                unlocks ? kPremiumColor : LmsColors.textGrey,
+              ),
+              const SizedBox(height: 2),
+              if (isDeleting)
+                const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: LmsColors.error),
+                  ),
+                )
+              else
+                SizedBox(
+                  height: 28,
+                  width: 28,
+                  child: PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.more_vert_rounded, size: 16, color: LmsColors.textGrey),
+                    tooltip: 'Plan actions',
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    onSelected: (v) {
+                      if (v == 'edit') _editPlan(context, lesson, row);
+                      if (v == 'delete') _deletePlan(context, lesson, row);
+                      if (v == 'assign') _openSubscriptionSheet(context, lesson);
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'assign',
+                        child: Row(children: [
+                          Icon(
+                            row.isRequired ? Icons.link_off_rounded : Icons.link_rounded,
+                            size: 16,
+                            color: LmsColors.textDark,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(row.isRequired ? 'Detach from lesson' : 'Attach to lesson'),
+                        ]),
+                      ),
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Row(children: [
+                          Icon(Icons.edit_outlined, size: 16, color: LmsColors.textDark),
+                          SizedBox(width: 8),
+                          Text('Edit plan'),
+                        ]),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(children: [
+                          Icon(Icons.delete_outline_rounded, size: 16, color: LmsColors.error),
+                          SizedBox(width: 8),
+                          Text('Delete plan', style: TextStyle(color: LmsColors.error)),
+                        ]),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tag(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 0.4, color: color),
+      ),
+    );
+  }
+
+  Widget _buildPlansError(LessonDetail lesson) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: LmsColors.errorBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: LmsColors.errorBorder),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.wifi_off_rounded, size: 17, color: LmsColors.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _plansError!,
+              style: const TextStyle(fontSize: 12.5, color: LmsColors.error, fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _ensureCoursePlans(lesson.chapter?.courseId, force: true),
+            style: TextButton.styleFrom(
+              foregroundColor: LmsColors.error,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Retry', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoPlansCard(BuildContext context, LessonDetail lesson) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: LmsColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: LmsColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.card_membership_outlined, size: 18, color: LmsColors.textGrey),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'This course has no subscription plans yet, so nobody can buy access to this lesson.',
+              style: TextStyle(fontSize: 12.5, color: LmsColors.textGrey, height: 1.45),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _openSubscriptionSheet(context, lesson),
+            style: TextButton.styleFrom(
+              foregroundColor: LmsColors.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Add', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One label per plan that unlocks the lesson. Falls back to the fetched
+  /// course list, then to the bare id, so a badge is never blank.
+  List<String> _planLabels(LessonDetail lesson) {
+    return [
+      for (final id in lesson.planIds)
+        lesson.plans.where((p) => p.id == id).map((p) => p.title).firstOrNull ??
+            _coursePlans.where((p) => p.id == id).map((p) => p.title).firstOrNull ??
+            'Plan #$id',
+    ];
+  }
+
   Widget _buildHeader(LessonDetail lesson) {
     final isPremium = lesson.accessTypeEnum == LessonAccessType.premium;
+    _ensureCoursePlans(lesson.chapter?.courseId);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 18, 16, 0),
@@ -594,6 +1269,10 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          LmsBreadcrumb(
+            path: ['Courses', lesson.chapter?.title, 'Lesson'],
+          ),
+          const SizedBox(height: 8),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -626,54 +1305,21 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
             ),
           ],
           const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _badge(
-                icon: isPremium ? Icons.workspace_premium_rounded : Icons.lock_open_rounded,
-                label: isPremium ? 'Premium' : 'Free',
-                color: isPremium ? Colors.amber.shade800 : LmsColors.success,
-                bg: isPremium ? Colors.amber.withOpacity(0.16) : LmsColors.success.withOpacity(0.12),
-              ),
-              if (lesson.isFreePreview)
-                _badge(
-                  icon: Icons.visibility_outlined,
-                  label: 'Free Preview',
-                  color: LmsColors.primary,
-                  bg: LmsColors.primary.withOpacity(0.1),
-                ),
-              _badge(
-                icon: lesson.typeEnum == LessonType.video
-                    ? Icons.play_circle_outline_rounded
-                    : lesson.typeEnum == LessonType.quiz
-                    ? Icons.quiz_outlined
-                    : Icons.article_outlined,
-                label: lesson.typeEnum.apiValue[0].toUpperCase() + lesson.typeEnum.apiValue.substring(1),
-                color: LmsColors.textDark,
-                bg: LmsColors.textDark.withOpacity(0.06),
-              ),
-            ],
+          LessonBadgeRow(
+            type: lesson.type,
+            status: lesson.status,
+            accessType: lesson.accessType,
+            isFreePreview: lesson.isFreePreview,
+            // The API nests the plans on the lesson, so the badges name them
+            // immediately instead of waiting on the course plan list.
+            planLabels: _planLabels(lesson),
+            hasVideo: lesson.hasVideo,
           ),
         ],
       ),
     );
   }
 
-  Widget _badge({required IconData icon, required String label, required Color color, required Color bg}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 5),
-          Text(label, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: color)),
-        ],
-      ),
-    );
-  }
 
   Widget _sectionHeader(String title, {VoidCallback? onDelete, bool isDeleting = false}) {
     return Padding(
@@ -788,6 +1434,8 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
 
                 _buildHeader(lesson),
 
+                _buildSubscriptionSection(context, lesson),
+
                 if (lesson.hasNote) ...[
                   _sectionHeader(
                     'Lesson Notes',
@@ -828,4 +1476,26 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
       },
     );
   }
+}
+
+/// Flattened plan for the subscription list, so the course-plan list and the
+/// plan nested on the lesson render through one widget.
+class _PlanRow {
+  final int id;
+  final String title;
+  final String? description;
+  final double price;
+  final int durationDays;
+  final bool isActive;
+  final bool isRequired;
+
+  const _PlanRow({
+    required this.id,
+    required this.title,
+    this.description,
+    required this.price,
+    required this.durationDays,
+    required this.isActive,
+    required this.isRequired,
+  });
 }

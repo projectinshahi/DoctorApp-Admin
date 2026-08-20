@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/const/responsive_const.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../models/course_get_model.dart';
 import '../../provider/course_get_provider.dart';
 import '../../provider/course_provider.dart'; // adjust path to your CourseProvider (update/delete)
 import 'add_course_screen.dart';
 import 'course_details_screen.dart';
+import 'edit_course_type_sheet.dart';
 
 class CourseListScreen extends StatefulWidget {
   const CourseListScreen({super.key});
@@ -60,14 +62,30 @@ class _CourseListScreenState extends State<CourseListScreen> {
       children: [
         Row(
           children: [
-            const Expanded(
-              child: Text(
-                "",
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: LmsColors.textDark,
-                ),
+            Expanded(
+              child: Consumer<CourseListGetProvider>(
+                builder: (context, provider, _) {
+                  final count = provider.courses.length;
+                  if (count == 0) return const SizedBox.shrink();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "$count course${count == 1 ? '' : 's'}",
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: LmsColors.textDark,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        "Expand a course to see its exam types, or use + Exam to add one.",
+                        style: TextStyle(fontSize: 12, color: LmsColors.textGrey),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
             ElevatedButton.icon(
@@ -293,15 +311,30 @@ class _FiltersBar extends StatelessWidget {
 }
 
 // ── Individual course row, now with Edit + Delete actions ───────────
-class _CourseRow extends StatelessWidget {
+/// One course, rendered as a group header with its exam types nested
+/// underneath. Tapping the card still opens the course; the chevron expands
+/// the group in place, so the Course -> Exam Type shape is visible from the
+/// list without navigating into each course to find out.
+class _CourseRow extends StatefulWidget {
   final CourseListGetModel course;
-  final VoidCallback onChanged; // called after successful edit/delete to refresh the list
+  final VoidCallback onChanged; // called after a successful edit/delete/add to refresh the list
 
   const _CourseRow({
-    super.key,
     required this.course,
     required this.onChanged,
   });
+
+  @override
+  State<_CourseRow> createState() => _CourseRowState();
+}
+
+class _CourseRowState extends State<_CourseRow> {
+  /// Courses that already have exam types start expanded - that's the
+  /// structure the admin came here to see. Empty ones stay collapsed so the
+  /// list doesn't fill with "nothing here" rows.
+  late bool _expanded = widget.course.courseTypes.isNotEmpty;
+
+  CourseListGetModel get course => widget.course;
 
   Color _statusColor(String status) {
     switch (status) {
@@ -314,49 +347,68 @@ class _CourseRow extends StatelessWidget {
     }
   }
 
-  Future<void> _openEditDialog(BuildContext context) async {
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? LmsColors.error : LmsColors.success,
+      ),
+    );
+  }
+
+  void _openCourse() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => CourseDetailsScreen(courseId: course.id)),
+    );
+  }
+
+  /// Adds an exam type straight from the list. The course is implied by the
+  /// row, so this reuses the same sheet the course details screen opens with
+  /// no extra "which course?" step.
+  Future<void> _openAddExamSheet() async {
+    final created = await showEditCourseTypeSheet(context, courseId: course.id);
+
+    if (created == true && mounted) {
+      _showSnack('Exam type added to "${course.title}"');
+      setState(() => _expanded = true); // show what was just created
+      widget.onChanged();
+    }
+  }
+
+  Future<void> _openEditDialog() async {
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _EditCourseDialog(course: course),
     );
 
-    if (result == true) {
-      onChanged();
-    }
+    if (result == true) widget.onChanged();
   }
 
-  Future<void> _confirmDelete(BuildContext context) async {
+  Future<void> _confirmDelete() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        title: const Text(
-          "Delete course?",
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text("Delete course?", style: TextStyle(fontWeight: FontWeight.w800)),
         content: Text(
-          'This will permanently delete "${course.title}" and all of its chapters, lessons, and exam types. This cannot be undone.',
+          'This will permanently delete "${course.title}" and all of its chapters, '
+          'lessons, and exam types. This cannot be undone.',
           style: const TextStyle(color: LmsColors.textGrey, height: 1.4),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text(
-              "Cancel",
-              style: TextStyle(color: LmsColors.textDark),
-            ),
+            child: const Text("Cancel", style: TextStyle(color: LmsColors.textDark)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: LmsColors.error,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
             child: const Text("Delete"),
           ),
@@ -364,190 +416,348 @@ class _CourseRow extends StatelessWidget {
       ),
     );
 
-    if (confirmed != true) return;
-    if (!context.mounted) return;
+    if (confirmed != true || !mounted) return;
 
     final courseProvider = context.read<CourseProvider>();
     final success = await courseProvider.deleteCourse(courseId: course.id);
 
-    if (!context.mounted) return;
-
+    if (!mounted) return;
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('"${course.title}" was deleted'),
-          backgroundColor: LmsColors.success,
-        ),
-      );
-      onChanged();
+      _showSnack('"${course.title}" was deleted');
+      widget.onChanged();
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            courseProvider.deleteErrorMessage ?? 'Failed to delete course',
-          ),
-          backgroundColor: LmsColors.error,
-        ),
+      _showSnack(
+        courseProvider.deleteErrorMessage ?? 'Failed to delete course',
+        isError: true,
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasCourseTypes = course.courseTypes.isNotEmpty;
+    final examTypes = course.courseTypes;
+    final isMobile = LmsResponsive.isMobile(context);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Material(
+      decoration: BoxDecoration(
         color: LmsColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => CourseDetailsScreen(
-                  courseId: course.id,
-                ),
-              ),
-            );
-          },
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: LmsColors.border),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: LmsColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Course header ─────────────────────────────────────────
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _openCourse,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    _CourseThumbnail(url: course.thumbnail),
+                    const SizedBox(width: 12),
                     Expanded(
-                      flex: 3,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             course.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 15,
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w800,
                               color: LmsColors.textDark,
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            hasCourseTypes
-                                ? "${course.courseTypes.length} exam type${course.courseTypes.length == 1 ? '' : 's'}"
-                                : "Standalone course",
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              color: LmsColors.textGrey,
-                            ),
+                          const SizedBox(height: 5),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              _MetaBadge(
+                                text: course.status,
+                                color: _statusColor(course.status),
+                              ),
+                              _MetaBadge(
+                                text: course.accessType == 'free' ? 'Free' : 'Premium',
+                                color: course.accessType == 'free'
+                                    ? LmsColors.textGrey
+                                    : LmsColors.primary,
+                              ),
+                              _MetaBadge(
+                                text: examTypes.isEmpty
+                                    ? 'No exam types'
+                                    : '${examTypes.length} exam type'
+                                        '${examTypes.length == 1 ? '' : 's'}',
+                                color: examTypes.isEmpty
+                                    ? LmsColors.textGrey
+                                    : LmsColors.textDark,
+                              ),
+                              _MetaBadge(
+                                text: '${course.lessonCount} lesson'
+                                    '${course.lessonCount == 1 ? '' : 's'}',
+                                color: LmsColors.textGrey,
+                              ),
+                              _MetaBadge(
+                                text: '${course.enrolledCount} enrolled',
+                                color: LmsColors.textGrey,
+                              ),
+                            ],
                           ),
                         ],
                       ),
                     ),
-                    Expanded(
-                      flex: 1,
-                      child: Text(
-                        "${course.lessonCount} lessons",
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: LmsColors.textGrey,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      flex: 1,
-                      child: Text(
-                        course.accessType == 'free' ? "Free" : "Premium",
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: LmsColors.textGrey,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      flex: 1,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _statusColor(course.status).withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          course.status,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: _statusColor(course.status),
+                    const SizedBox(width: 8),
+
+                    // Add-exam sits on the row itself, so the course it
+                    // belongs to is never ambiguous.
+                    if (isMobile)
+                      IconButton(
+                        onPressed: _openAddExamSheet,
+                        icon: const Icon(Icons.playlist_add_rounded, size: 20),
+                        color: LmsColors.primary,
+                        tooltip: 'Add exam type',
+                      )
+                    else
+                      OutlinedButton.icon(
+                        onPressed: _openAddExamSheet,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: LmsColors.primary,
+                          side: const BorderSide(color: LmsColors.primary),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9),
                           ),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        icon: const Icon(Icons.add_rounded, size: 16),
+                        label: const Text(
+                          'Exam',
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
                         ),
                       ),
-                    ),
-                    // ── Edit / Delete actions ──
-                    IconButton(
-                      icon: const Icon(Icons.edit_outlined,
+
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert_rounded,
                           size: 20, color: LmsColors.textGrey),
-                      tooltip: "Edit",
-                      onPressed: () => _openEditDialog(context),
+                      tooltip: 'Course actions',
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'open':
+                            _openCourse();
+                          case 'edit':
+                            _openEditDialog();
+                          case 'delete':
+                            _confirmDelete();
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'open', child: Text('Open course')),
+                        PopupMenuItem(value: 'edit', child: Text('Edit course')),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete', style: TextStyle(color: LmsColors.error)),
+                        ),
+                      ],
                     ),
+
+                    // Expand is its own target - tapping the card still opens
+                    // the course, which is the behaviour that already existed.
                     IconButton(
-                      icon: const Icon(Icons.delete_outline,
-                          size: 20, color: LmsColors.error),
-                      tooltip: "Delete",
-                      onPressed: () => _confirmDelete(context),
-                    ),
-                    const Icon(
-                      Icons.chevron_right,
+                      onPressed: () => setState(() => _expanded = !_expanded),
+                      icon: AnimatedRotation(
+                        turns: _expanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 150),
+                        child: const Icon(Icons.expand_more_rounded, size: 22),
+                      ),
                       color: LmsColors.textGrey,
+                      tooltip: _expanded ? 'Hide exam types' : 'Show exam types',
                     ),
                   ],
                 ),
-
-                if (hasCourseTypes) ...[
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: course.courseTypes.map((ct) {
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: LmsColors.bg,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: LmsColors.border),
-                        ),
-                        child: Text(
-                          ct.title,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: LmsColors.textDark,
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ],
+              ),
             ),
+          ),
+
+          // ── Nested exam types ─────────────────────────────────────
+          if (_expanded) ...[
+            const Divider(height: 1, color: LmsColors.border),
+            if (examTypes.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'No exam types in this course yet.',
+                        style: TextStyle(fontSize: 12.5, color: LmsColors.textGrey),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _openAddExamSheet,
+                      child: const Text(
+                        'Add the first one',
+                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ...examTypes.map(
+                (examType) => _ExamTypeRow(
+                  examType: examType,
+                  statusColor: _statusColor(examType.status),
+                  onTap: _openCourse, // exam types have no screen of their own
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One exam type nested under its course. Indented and tinted so it reads as
+/// a child of the row above rather than another course.
+class _ExamTypeRow extends StatelessWidget {
+  final CourseType examType;
+  final Color statusColor;
+  final VoidCallback onTap;
+
+  const _ExamTypeRow({
+    required this.examType,
+    required this.statusColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: LmsColors.bg,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 11, 14, 11),
+          child: Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      examType.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: LmsColors.textDark,
+                      ),
+                    ),
+                    if (examType.description != null &&
+                        examType.description!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        examType.description!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _MetaBadge(text: examType.status, color: statusColor),
+              const SizedBox(width: 6),
+              _MetaBadge(
+                text: examType.accessType == 'free' ? 'Free' : 'Premium',
+                color: examType.accessType == 'free'
+                    ? LmsColors.textGrey
+                    : LmsColors.primary,
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right_rounded, size: 18, color: LmsColors.textGrey),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
+/// Course thumbnail with a placeholder, so a missing or broken image doesn't
+/// leave a hole in the row.
+class _CourseThumbnail extends StatelessWidget {
+  final String? url;
+
+  const _CourseThumbnail({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    const double size = 46;
+
+    Widget placeholder() => Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: LmsColors.primarySoft,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.menu_book_rounded, size: 20, color: LmsColors.primary),
+        );
+
+    if (url == null || url!.trim().isEmpty) return placeholder();
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Image.network(
+        url!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => placeholder(),
+      ),
+    );
+  }
+}
+
+class _MetaBadge extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _MetaBadge({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color),
+      ),
+    );
+  }
+}
+
 
 // ── Edit Course dialog ────────────────────────────────────────────
 class _EditCourseDialog extends StatefulWidget {

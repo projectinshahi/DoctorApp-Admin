@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 
 import '../core/const/local_storegae.dart';
 import '../models/lesson_detail_model.dart';
+import '../core/const/api_constant.dart';
 
 class LessonResult {
   final bool isSuccess;
@@ -20,7 +21,7 @@ class LessonResult {
 class LessonDetailsService {
   final String baseUrl;
 
-  LessonDetailsService({this.baseUrl = 'http://localhost:3000'});
+  LessonDetailsService({this.baseUrl = ApiConstant.root});
 
   Future<String?> _getToken() async {
     final adminToken = await AdminLocalStorage.getToken();

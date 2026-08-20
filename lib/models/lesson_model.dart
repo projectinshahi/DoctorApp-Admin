@@ -1,26 +1,28 @@
-import '../services/lesson_services.dart'; // for LessonType / LessonAccessType enums
+import '../services/lesson_services.dart';
+import 'lesson_detail_model.dart'; // LessonPlanSummary + shared plan parsers // for LessonType / LessonAccessType / LessonStatus enums
 
 /// The single source of truth for the Lesson model across the whole app.
-/// Do NOT define another `Lesson` class anywhere else (e.g. inside
-/// course_details_model.dart) - having two classes with the same name
-/// is exactly what causes "getter isn't defined" errors like this.
 class Lesson {
   final int id;
   final int chapterId;
   final String title;
-  final String? description;        // NEW - optional longer text about the lesson
+  final String? description;
   final String type;                // raw API value: 'video' | 'text' | 'quiz'
-  final String? videoUrl;           // optional - uploaded video file URL (Cloudinary)
-  final String? videoPublicId;      // Cloudinary public_id, needed to replace/delete the video
-  final String? thumbnailUrl;       // NEW - preview image URL (Cloudinary)
-  final String? thumbnailPublicId;  // NEW - Cloudinary public_id, needed to replace/delete the thumbnail
-  final String? noteUrl;            // optional - uploaded PDF/DOC/DOCX file URL (Cloudinary)
-  final String? notePublicId;       // Cloudinary public_id, needed to replace/delete the note
-  final String? noteFileType;       // 'pdf' | 'doc' | 'docx', tells the UI which icon/viewer to use
-  final String? content;            // quiz reference, only meaningful when type == 'quiz'
+  final String? videoUrl;
+  final String? videoPublicId;
+  final String? thumbnailUrl;
+  final String? thumbnailPublicId;
+  final String? noteUrl;
+  final String? notePublicId;
+  final String? noteFileType;
+  final String? content;            // quiz reference
   final int displayOrder;
   final bool isFreePreview;
   final String accessType;          // raw API value: 'free' | 'premium'
+  final String status;              // raw API value: 'draft' | 'published' | 'archived'
+  final int? planId;                // NEW - first/legacy plan id
+  final List<LessonPlanSummary> plans; // NEW - every plan that unlocks it
+  final Set<int> planIds;           // NEW - empty means any active subscription
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -41,6 +43,10 @@ class Lesson {
     required this.displayOrder,
     required this.isFreePreview,
     required this.accessType,
+    required this.status,
+    this.planId,
+    this.plans = const [],
+    this.planIds = const {},
     this.createdAt,
     this.updatedAt,
   });
@@ -48,7 +54,7 @@ class Lesson {
   factory Lesson.fromJson(Map<String, dynamic> json) {
     return Lesson(
       id: json['id'] as int,
-      chapterId: json['chapterId'] as int? ?? 0, // defensive: may be omitted in nested JSON
+      chapterId: json['chapterId'] as int? ?? 0,
       title: json['title'] as String? ?? '',
       description: json['description'] as String?,
       type: json['type'] as String? ?? 'text',
@@ -63,6 +69,10 @@ class Lesson {
       displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
       isFreePreview: json['isFreePreview'] as bool? ?? false,
       accessType: json['accessType'] as String? ?? 'free',
+      status: json['status'] as String? ?? 'draft',
+      planId: json['planId'] as int?,
+      plans: parseLessonPlans(json),
+      planIds: parseLessonPlanIds(json),
       createdAt: json['createdAt'] != null ? DateTime.tryParse(json['createdAt'] as String) : null,
       updatedAt: json['updatedAt'] != null ? DateTime.tryParse(json['updatedAt'] as String) : null,
     );
@@ -86,6 +96,9 @@ class Lesson {
       'displayOrder': displayOrder,
       'isFreePreview': isFreePreview,
       'accessType': accessType,
+      'status': status,
+      'planId': planId,
+      'planIds': planIds.toList(),
     };
   }
 
@@ -96,4 +109,5 @@ class Lesson {
 
   LessonType get typeEnum => LessonTypeX.fromApiValue(type);
   LessonAccessType get accessTypeEnum => LessonAccessTypeX.fromApiValue(accessType);
+  LessonStatus get statusEnum => LessonStatusX.fromApiValue(status);
 }

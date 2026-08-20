@@ -8,6 +8,7 @@ import 'package:admin_drapp/provider/course_provider.dart';
 import 'package:admin_drapp/provider/course_type_provider.dart';
 import 'package:admin_drapp/provider/lesson_details_provider.dart';
 import 'package:admin_drapp/provider/lesson_upload_provider.dart';
+import 'package:admin_drapp/provider/question_bank_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -34,7 +35,12 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AdminStudentProvider()),
         ChangeNotifierProvider(create: (_) => AdminPlanProvider()),
         ChangeNotifierProvider(create: (_) => LessonUpdateProvider()),
-        ChangeNotifierProvider(create: (_) => LessonDetailsProvider())
+        ChangeNotifierProvider(create: (_) => LessonDetailsProvider()),
+        // Question bank. The add/edit sheet builds its own
+        // QuestionUpdateProvider / SubjectTopicProvider, the same way the
+        // lesson sheet does, so these two are only the list screen's state.
+        ChangeNotifierProvider(create: (_) => QuestionListProvider()),
+        ChangeNotifierProvider(create: (_) => SubjectTopicProvider()),
       ],
       child: MaterialApp(
          debugShowCheckedModeBanner: false,

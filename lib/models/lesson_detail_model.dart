@@ -25,6 +25,62 @@ class LessonChapterSummary {
   }
 }
 
+/// The plan the API nests on a lesson (LESSON_SELECT.plan). Enough to render
+/// the subscription card without a second round-trip to /courses/x/plans.
+class LessonPlanSummary {
+  final int id;
+  final String title;
+  final double price;
+  final int durationDays;
+  final bool isActive;
+
+  const LessonPlanSummary({
+    required this.id,
+    required this.title,
+    required this.price,
+    required this.durationDays,
+    required this.isActive,
+  });
+
+  factory LessonPlanSummary.fromJson(Map<String, dynamic> json) {
+    return LessonPlanSummary(
+      id: json['id'] as int,
+      title: json['title'] as String? ?? 'Plan #${json['id']}',
+      price: (json['price'] as num?)?.toDouble() ?? 0,
+      durationDays: (json['durationDays'] as num?)?.toInt() ?? 0,
+      isActive: json['isActive'] as bool? ?? true,
+    );
+  }
+}
+
+/// Reads the plans attached to a lesson out of any lesson payload.
+///
+/// Three shapes are accepted so the app works before and after the backend
+/// gains many-to-many plans:
+///   `plans: [{...}]`  - the multi-plan shape (preferred)
+///   `plan:  {...}`    - the single nested plan the API sends today
+///   `planId: 3`       - id only, no nested object (list endpoints)
+List<LessonPlanSummary> parseLessonPlans(Map<String, dynamic> json) {
+  final raw = json['plans'];
+  if (raw is List) {
+    return raw.whereType<Map<String, dynamic>>().map(LessonPlanSummary.fromJson).toList();
+  }
+  final one = json['plan'];
+  if (one is Map<String, dynamic>) return [LessonPlanSummary.fromJson(one)];
+  return const [];
+}
+
+/// Every plan id that unlocks a lesson. Empty on a premium lesson means
+/// "any active subscription for the course".
+Set<int> parseLessonPlanIds(Map<String, dynamic> json) {
+  final ids = json['planIds'];
+  if (ids is List) return ids.whereType<num>().map((e) => e.toInt()).toSet();
+  final fromObjects = parseLessonPlans(json).map((p) => p.id).toSet();
+  if (fromObjects.isNotEmpty) return fromObjects;
+  final single = json['planId'];
+  return single is num ? {single.toInt()} : <int>{};
+}
+
 /// Full lesson detail - matches the backend's LESSON_SELECT exactly:
 /// video (url + publicId), thumbnail (url + publicId), notes (url +
 /// publicId + fileType), quiz content, and access settings. Used for
@@ -42,10 +98,27 @@ class LessonDetail {
   final String? noteUrl;
   final String? notePublicId;
   final String? noteFileType; // 'pdf' | 'doc' | 'docx'
-  final String? content; // quiz reference, only meaningful when type == 'quiz'
+  /// Legacy free-text quiz reference. Superseded by [quizId]; kept so old
+  /// lessons can still show what they used to point at. Never written back.
+  final String? content;
+
+  /// The linked Quiz, set only when type == 'quiz'.
+  final int? quizId;
   final int displayOrder;
   final bool isFreePreview;
   final String accessType; // raw API value: 'free' | 'premium'
+  final String status; // raw API value: 'draft' | 'published' | 'archived'
+  final int? planId; // specific plan required when accessType == 'premium'
+
+  /// Every plan that unlocks this lesson. The API sends a single nested
+  /// `plan` today; `plans: [...]` is read first so a future many-to-many
+  /// backend needs no client change.
+  final List<LessonPlanSummary> plans;
+
+  /// Ids of every plan that unlocks this lesson. Empty on a premium lesson
+  /// means "any active subscription".
+  final Set<int> planIds;
+
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final LessonChapterSummary? chapter; // only present with includeChapter=true
@@ -64,9 +137,14 @@ class LessonDetail {
     this.notePublicId,
     this.noteFileType,
     this.content,
+    this.quizId,
     required this.displayOrder,
     required this.isFreePreview,
     required this.accessType,
+    required this.status,
+    this.planId,
+    this.plans = const [],
+    this.planIds = const {},
     this.createdAt,
     this.updatedAt,
     this.chapter,
@@ -87,9 +165,14 @@ class LessonDetail {
       notePublicId: json['notePublicId'] as String?,
       noteFileType: json['noteFileType'] as String?,
       content: json['content'] as String?,
+      quizId: (json['quizId'] as num?)?.toInt(),
       displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
       isFreePreview: json['isFreePreview'] as bool? ?? false,
       accessType: json['accessType'] as String? ?? 'free',
+      status: json['status'] as String? ?? 'draft',
+      planId: json['planId'] as int?,
+      plans: parseLessonPlans(json),
+      planIds: parseLessonPlanIds(json),
       createdAt: json['createdAt'] != null ? DateTime.tryParse(json['createdAt'] as String) : null,
       updatedAt: json['updatedAt'] != null ? DateTime.tryParse(json['updatedAt'] as String) : null,
       chapter: json['chapter'] != null
@@ -102,6 +185,10 @@ class LessonDetail {
   bool get hasNote => noteUrl != null && noteUrl!.isNotEmpty;
   bool get hasThumbnail => thumbnailUrl != null && thumbnailUrl!.isNotEmpty;
 
+  /// Kept as the old name so existing call sites keep reading.
+  Set<int> get requiredPlanIds => planIds;
+
   LessonType get typeEnum => LessonTypeX.fromApiValue(type);
   LessonAccessType get accessTypeEnum => LessonAccessTypeX.fromApiValue(accessType);
+  LessonStatus get statusEnum => LessonStatusX.fromApiValue(status);
 }

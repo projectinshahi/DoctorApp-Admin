@@ -5,9 +5,10 @@ import 'package:http/http.dart' as http;
 
 import '../core/const/local_storegae.dart';
 import '../models/admin_student_model.dart';
+import '../core/const/api_constant.dart';
 
 class AdminStudentService {
-  static const String baseUrl = 'http://localhost:3000';
+  static const String baseUrl = ApiConstant.root;
 
   Future<AdminStudentResponse> getStudents({
     int page = 1,

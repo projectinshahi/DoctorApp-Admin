@@ -14,6 +14,10 @@ class AdminPlanProvider extends ChangeNotifier {
   bool isSaving = false;
   String? saveErrorMessage;
 
+  /// The plan returned by the last successful create/update — lets a caller
+  /// (e.g. the lesson sheet) select the plan it just created.
+  AdminPlanModel? lastSavedPlan;
+
   bool isDeleting = false;
   String? deleteErrorMessage;
 
@@ -44,7 +48,7 @@ class AdminPlanProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _service.createPlan(
+      lastSavedPlan = await _service.createPlan(
         courseId: courseId,
         title: title,
         description: description,
@@ -77,7 +81,7 @@ class AdminPlanProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _service.updatePlan(
+      lastSavedPlan = await _service.updatePlan(
         planId: planId,
         title: title,
         description: description,

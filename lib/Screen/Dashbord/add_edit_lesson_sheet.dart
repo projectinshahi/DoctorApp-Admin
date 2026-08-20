@@ -7,6 +7,11 @@ import '../../core/theam/theam_dart.dart';
 import '../../provider/lesson_upload_provider.dart';
 import '../../services/lesson_services.dart';
 import '../../services/lesson_upload_service.dart';
+import '../../models/lesson_detail_model.dart';
+import '../../models/quiz_model.dart';
+import '../../provider/question_bank_provider.dart';
+import '../../services/quiz_service.dart';
+import 'lesson_subscription_sheet.dart';
 
 class _UploadTile extends StatelessWidget {
   final IconData icon;
@@ -19,7 +24,7 @@ class _UploadTile extends StatelessWidget {
   final VoidCallback onPick;
   final VoidCallback onRetry;
   final VoidCallback onRemove;
-  final Widget? previewImage; // NEW - optional thumbnail preview shown instead of an icon+label
+  final Widget? previewImage;
 
   const _UploadTile({
     required this.icon,
@@ -142,6 +147,7 @@ class _FieldLabel extends StatelessWidget {
 Future<bool?> showAddEditLessonSheet(
     BuildContext context, {
       required int chapterId,
+      int? courseId, // NEW - needed to list the course's plans
       int? lessonId,
       String? initialTitle,
       String? initialDescription,
@@ -153,9 +159,13 @@ Future<bool?> showAddEditLessonSheet(
       String? initialNoteUrl,
       String? initialNotePublicId,
       String? initialNoteFileType,
-      String? initialContent, // quiz reference
+      String? initialContent, // legacy free-text reference, shown read-only
+      int? initialQuizId,
       bool? initialIsFreePreview,
       LessonAccessType? initialAccessType,
+      LessonStatus? initialStatus, // NEW
+      Set<int> initialPlanIds = const {}, // NEW - multi-plan selection
+      List<LessonPlanSummary> initialPlans = const [], // NEW - keeps delisted plans visible
       int? initialDisplayOrder,
     }) {
   return showModalBottomSheet<bool>(
@@ -163,10 +173,16 @@ Future<bool?> showAddEditLessonSheet(
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) {
-      return ChangeNotifierProvider(
-        create: (_) => LessonUpdateProvider(),
+      return MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => LessonUpdateProvider()),
+          // Subject/topic for the quiz picker. Its own instance, so the
+          // Question Bank screen's taxonomy state is untouched.
+          ChangeNotifierProvider(create: (_) => SubjectTopicProvider()),
+        ],
         child: _AddEditLessonSheet(
           chapterId: chapterId,
+          courseId: courseId, // NEW
           lessonId: lessonId,
           initialTitle: initialTitle,
           initialDescription: initialDescription,
@@ -179,8 +195,12 @@ Future<bool?> showAddEditLessonSheet(
           initialNotePublicId: initialNotePublicId,
           initialNoteFileType: initialNoteFileType,
           initialContent: initialContent,
+          initialQuizId: initialQuizId,
           initialIsFreePreview: initialIsFreePreview,
           initialAccessType: initialAccessType,
+          initialStatus: initialStatus, // NEW
+          initialPlanIds: initialPlanIds, // NEW
+          initialPlans: initialPlans, // NEW
           initialDisplayOrder: initialDisplayOrder,
         ),
       );
@@ -188,11 +208,11 @@ Future<bool?> showAddEditLessonSheet(
   );
 }
 
-/// How the video source is being provided for this lesson.
 enum _VideoSourceMode { upload, url }
 
 class _AddEditLessonSheet extends StatefulWidget {
   final int chapterId;
+  final int? courseId; // NEW
   final int? lessonId;
   final String? initialTitle;
   final String? initialDescription;
@@ -205,12 +225,17 @@ class _AddEditLessonSheet extends StatefulWidget {
   final String? initialNotePublicId;
   final String? initialNoteFileType;
   final String? initialContent;
+  final int? initialQuizId;
   final bool? initialIsFreePreview;
   final LessonAccessType? initialAccessType;
+  final LessonStatus? initialStatus; // NEW
+  final Set<int> initialPlanIds; // NEW
+  final List<LessonPlanSummary> initialPlans; // NEW
   final int? initialDisplayOrder;
 
   const _AddEditLessonSheet({
     required this.chapterId,
+    this.courseId, // NEW
     this.lessonId,
     this.initialTitle,
     this.initialDescription,
@@ -223,8 +248,12 @@ class _AddEditLessonSheet extends StatefulWidget {
     this.initialNotePublicId,
     this.initialNoteFileType,
     this.initialContent,
+    this.initialQuizId,
     this.initialIsFreePreview,
     this.initialAccessType,
+    this.initialStatus, // NEW
+    this.initialPlanIds = const {}, // NEW
+    this.initialPlans = const [], // NEW
     this.initialDisplayOrder,
   });
 
@@ -237,14 +266,17 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   final _uploadService = LessonUploadService();
 
   late final TextEditingController _titleController;
-  late final TextEditingController _descriptionController; // NEW
-  late final TextEditingController _quizRefController;
+  late final TextEditingController _descriptionController;
   late final TextEditingController _videoUrlController;
   LessonType _type = LessonType.video;
   late bool _isFreePreview;
   late LessonAccessType _accessType;
+  late LessonStatus _status; // NEW
 
-  // ── Video state ──
+  // Premium plan picker - a lesson can require any number of plans; empty
+  // means "any active subscription".
+  late Set<int> _planIds;
+
   _VideoSourceMode _videoSourceMode = _VideoSourceMode.upload;
   String? _videoUrl;
   String? _videoPublicId;
@@ -253,7 +285,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   String? _videoUploadError;
   bool _videoRemoved = false;
 
-  // ── Thumbnail state (NEW) ──
   String? _thumbnailUrl;
   String? _thumbnailPublicId;
   String? _pickedThumbnailName;
@@ -261,7 +292,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   String? _thumbnailUploadError;
   bool _thumbnailRemoved = false;
 
-  // ── Note upload state (PDF / DOC / DOCX) ──
   String? _noteUrl;
   String? _notePublicId;
   String? _noteFileType;
@@ -269,6 +299,43 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   bool _isUploadingNote = false;
   String? _noteUploadError;
   bool _noteRemoved = false;
+
+  // ── Quiz link (only used when _type == LessonType.quiz) ──────────
+  final _quizService = QuizService();
+
+  int? _selectedQuizId;
+  Quiz? _selectedQuiz; // carries the live question count for the summary chip
+  List<Quiz> _availableQuizzes = [];
+
+  /// Filters that narrow the quiz dropdown. Subject and topic mirror the
+  /// Question Bank taxonomy; the exam tag is derived from the loaded quizzes
+  /// because no endpoint lists tags on their own.
+  int? _filterSubjectId;
+  int? _filterTopicId;
+  String? _filterExamTag;
+
+  bool _isLoadingQuizzes = false;
+  bool _isLoadingSelectedQuiz = false;
+  String? _quizLoadError;
+
+  /// Set when Save is pressed on a quiz lesson with nothing selected - the
+  /// dropdown isn't a FormField, so it can't report through the validator.
+  String? _quizValidationError;
+
+  bool get _isQuiz => _type == LessonType.quiz;
+
+  /// True when an edit started on a quiz lesson - needed to know whether to
+  /// send an explicit null on the way out of quiz type.
+  late final bool _startedAsQuiz;
+
+  /// publicIds of assets uploaded during THIS session that are not yet
+  /// saved onto a lesson. Anything left here when the sheet closes is an
+  /// orphan on Cloudinary, so it gets deleted. Initial values from edit
+  /// mode are deliberately NOT tracked - those belong to the saved lesson,
+  /// and removing them is the save's job (via the remove* flags).
+  String? _freshVideoPublicId;
+  String? _freshThumbnailPublicId;
+  String? _freshNotePublicId;
 
   bool get _isEditMode => widget.lessonId != null;
 
@@ -289,18 +356,16 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     super.initState();
     _titleController = TextEditingController(text: widget.initialTitle ?? '');
     _descriptionController = TextEditingController(text: widget.initialDescription ?? '');
-    _quizRefController = TextEditingController(text: widget.initialContent ?? '');
     _type = widget.initialType ?? LessonType.video;
     _isFreePreview = widget.initialIsFreePreview ?? false;
     _accessType = widget.initialAccessType ?? LessonAccessType.free;
+    _status = widget.initialStatus ?? LessonStatus.draft; // NEW
+    _planIds = {...widget.initialPlanIds}; // NEW
 
     _videoUrl = widget.initialVideoUrl;
     _videoPublicId = widget.initialVideoPublicId;
     _videoUrlController = TextEditingController(text: widget.initialVideoUrl ?? '');
 
-    // If a lesson already has a video URL but no publicId (i.e. it wasn't
-    // uploaded through this picker — it was pasted or came from elsewhere),
-    // default the toggle to URL mode so editing feels natural.
     if (widget.initialVideoUrl != null && widget.initialVideoPublicId == null) {
       _videoSourceMode = _VideoSourceMode.url;
     }
@@ -311,34 +376,114 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     _noteUrl = widget.initialNoteUrl;
     _notePublicId = widget.initialNotePublicId;
     _noteFileType = widget.initialNoteFileType;
+
+    _selectedQuizId = widget.initialQuizId;
+    _startedAsQuiz = _isEditMode && widget.initialType == LessonType.quiz;
+
+    if (_isQuiz) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _initQuizPicker());
+    }
+  }
+
+  /// Loads the subject list, and - in edit mode - resolves the already-linked
+  /// quiz so its subject/topic/tag can pre-populate the filters and its title
+  /// can show in the summary chip.
+  Future<void> _initQuizPicker() async {
+    if (!mounted) return;
+    final taxonomy = context.read<SubjectTopicProvider>();
+    taxonomy.loadSubjects();
+
+    final linkedId = _selectedQuizId;
+    if (linkedId == null) return;
+
+    setState(() => _isLoadingSelectedQuiz = true);
+    final result = await _quizService.get(linkedId);
+
+    if (!mounted) return;
+    if (!result.isSuccess || result.quiz == null) {
+      setState(() {
+        _isLoadingSelectedQuiz = false;
+        _quizLoadError = result.errorMessage;
+      });
+      return;
+    }
+
+    final quiz = result.quiz!;
+    setState(() {
+      _isLoadingSelectedQuiz = false;
+      _selectedQuiz = quiz;
+      _filterSubjectId = quiz.subjectId;
+      _filterTopicId = quiz.topicId;
+      _filterExamTag = quiz.examTag;
+    });
+
+    await taxonomy.loadTopics(subjectId: quiz.subjectId);
+    await _loadQuizzes();
   }
 
   @override
   void dispose() {
+    // Sheet dismissed without a successful save - every upload made here is
+    // unreferenced. Fire-and-forget through the service, not the provider:
+    // ChangeNotifierProvider is tearing the provider down right now and its
+    // notifyListeners() would throw.
+    _discardOrphan(_freshVideoPublicId, _uploadService.deleteVideo);
+    _discardOrphan(_freshThumbnailPublicId, _uploadService.deleteThumbnail);
+    _discardOrphan(_freshNotePublicId, _uploadService.deleteNote);
+
     _titleController.dispose();
     _descriptionController.dispose();
-    _quizRefController.dispose();
     _videoUrlController.dispose();
     super.dispose();
   }
 
-  // ── Video: pick + upload ──
+  void _discardOrphan(String? publicId, Future<DeleteResult> Function(String) delete) {
+    if (publicId != null && publicId.isNotEmpty) delete(publicId);
+  }
+
+  /// Deletes an unsaved upload through the provider, so the sheet's error
+  /// state reflects a failed cleanup. Safe to call while mounted only.
+  Future<void> _deleteFreshAsset(
+    String? publicId,
+    Future<bool> Function({required String publicId}) delete,
+  ) async {
+    if (publicId == null || publicId.isEmpty) return;
+    await delete(publicId: publicId);
+  }
+
+  void _setAccessType(LessonAccessType value) {
+    setState(() {
+      _accessType = value;
+      // Mirrors the backend: a free lesson can't carry plans.
+      if (value != LessonAccessType.premium) _planIds = {};
+    });
+  }
+
   Future<void> _pickVideo() async {
+    final provider = context.read<LessonUpdateProvider>();
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.video,
-      withData: true, // REQUIRED on web (Chrome) — gives bytes instead of a path
+      withData: true,
     );
     if (result == null || result.files.single.bytes == null) return;
 
     final Uint8List bytes = result.files.single.bytes!;
     final String name = result.files.single.name;
 
+    // Replacing a file picked earlier in this session: the old upload is
+    // about to become unreachable, so drop it before the new one lands.
+    final String? replaced = _freshVideoPublicId;
+
     setState(() {
       _pickedVideoName = name;
       _isUploadingVideo = true;
       _videoUploadError = null;
       _videoRemoved = false;
+      _freshVideoPublicId = null;
     });
+
+    await _deleteFreshAsset(replaced, provider.deleteVideoAsset);
 
     final uploadResult = await _uploadService.uploadVideo(bytes, name);
 
@@ -348,34 +493,48 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       if (uploadResult.isSuccess) {
         _videoUrl = uploadResult.url;
         _videoPublicId = uploadResult.publicId;
+        _freshVideoPublicId = uploadResult.publicId;
       } else {
         _videoUploadError = uploadResult.errorMessage;
       }
     });
   }
 
-  void _removeVideo() {
+  Future<void> _removeVideo() async {
+    final provider = context.read<LessonUpdateProvider>();
+    final String? orphan = _freshVideoPublicId;
+
     setState(() {
       _videoUrl = null;
       _videoPublicId = null;
       _pickedVideoName = null;
       _videoUploadError = null;
+      _freshVideoPublicId = null;
       _videoUrlController.clear();
       _videoRemoved = _isEditMode && _hadInitialVideo;
     });
+
+    await _deleteFreshAsset(orphan, provider.deleteVideoAsset);
   }
 
-  void _setVideoSourceMode(_VideoSourceMode mode) {
+  Future<void> _setVideoSourceMode(_VideoSourceMode mode) async {
     if (mode == _videoSourceMode) return;
+
+    final provider = context.read<LessonUpdateProvider>();
+    final String? orphan = _freshVideoPublicId;
+
     setState(() {
       _videoSourceMode = mode;
       _videoUrl = null;
       _videoPublicId = null;
       _pickedVideoName = null;
       _videoUploadError = null;
+      _freshVideoPublicId = null;
       _videoUrlController.clear();
       _videoRemoved = _isEditMode && _hadInitialVideo;
     });
+
+    await _deleteFreshAsset(orphan, provider.deleteVideoAsset);
   }
 
   void _onVideoUrlChanged(String value) {
@@ -387,23 +546,29 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     });
   }
 
-  // ── Thumbnail: pick + upload (NEW) ──
   Future<void> _pickThumbnail() async {
+    final provider = context.read<LessonUpdateProvider>();
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
-      withData: true, // REQUIRED on web (Chrome) — gives bytes instead of a path
+      withData: true,
     );
     if (result == null || result.files.single.bytes == null) return;
 
     final Uint8List bytes = result.files.single.bytes!;
     final String name = result.files.single.name;
 
+    final String? replaced = _freshThumbnailPublicId;
+
     setState(() {
       _pickedThumbnailName = name;
       _isUploadingThumbnail = true;
       _thumbnailUploadError = null;
       _thumbnailRemoved = false;
+      _freshThumbnailPublicId = null;
     });
+
+    await _deleteFreshAsset(replaced, provider.deleteThumbnailAsset);
 
     final uploadResult = await _uploadService.uploadThumbnail(bytes, name);
 
@@ -413,24 +578,32 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       if (uploadResult.isSuccess) {
         _thumbnailUrl = uploadResult.url;
         _thumbnailPublicId = uploadResult.publicId;
+        _freshThumbnailPublicId = uploadResult.publicId;
       } else {
         _thumbnailUploadError = uploadResult.errorMessage;
       }
     });
   }
 
-  void _removeThumbnail() {
+  Future<void> _removeThumbnail() async {
+    final provider = context.read<LessonUpdateProvider>();
+    final String? orphan = _freshThumbnailPublicId;
+
     setState(() {
       _thumbnailUrl = null;
       _thumbnailPublicId = null;
       _pickedThumbnailName = null;
       _thumbnailUploadError = null;
+      _freshThumbnailPublicId = null;
       _thumbnailRemoved = _isEditMode && _hadInitialThumbnail;
     });
+
+    await _deleteFreshAsset(orphan, provider.deleteThumbnailAsset);
   }
 
-  // ── Note: pick + upload (PDF / DOC / DOCX) ──
   Future<void> _pickNote() async {
+    final provider = context.read<LessonUpdateProvider>();
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'doc', 'docx'],
@@ -441,12 +614,17 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     final Uint8List bytes = result.files.single.bytes!;
     final String name = result.files.single.name;
 
+    final String? replaced = _freshNotePublicId;
+
     setState(() {
       _pickedNoteName = name;
       _isUploadingNote = true;
       _noteUploadError = null;
       _noteRemoved = false;
+      _freshNotePublicId = null;
     });
+
+    await _deleteFreshAsset(replaced, provider.deleteNoteAsset);
 
     final uploadResult = await _uploadService.uploadNote(bytes, name);
 
@@ -457,35 +635,192 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
         _noteUrl = uploadResult.url;
         _notePublicId = uploadResult.publicId;
         _noteFileType = uploadResult.fileType;
+        _freshNotePublicId = uploadResult.publicId;
       } else {
         _noteUploadError = uploadResult.errorMessage;
       }
     });
   }
 
-  void _removeNote() {
+  Future<void> _removeNote() async {
+    final provider = context.read<LessonUpdateProvider>();
+    final String? orphan = _freshNotePublicId;
+
     setState(() {
       _noteUrl = null;
       _notePublicId = null;
       _noteFileType = null;
       _pickedNoteName = null;
       _noteUploadError = null;
+      _freshNotePublicId = null;
       _noteRemoved = _isEditMode && _hadInitialNote;
     });
+
+    await _deleteFreshAsset(orphan, provider.deleteNoteAsset);
+  }
+
+  // ── Quiz picker ──────────────────────────────────────────────────
+
+  /// Switching the primary type in or out of quiz. The media tiles and the
+  /// quiz picker are mutually exclusive, so this also spins up the picker
+  /// the first time quiz is chosen.
+  void _onTypeChanged(LessonType type) {
+    if (type == _type) return;
+    final wasQuiz = _isQuiz;
+    setState(() {
+      _type = type;
+      _quizValidationError = null;
+    });
+    if (!wasQuiz && type == LessonType.quiz) _initQuizPicker();
+  }
+
+  Future<void> _onQuizSubjectChanged(int? subjectId) async {
+    if (subjectId == null || subjectId == _filterSubjectId) return;
+
+    final taxonomy = context.read<SubjectTopicProvider>();
+    setState(() {
+      _filterSubjectId = subjectId;
+      _filterTopicId = null; // a topic only means something inside its subject
+      _filterExamTag = null;
+      _availableQuizzes = [];
+    });
+
+    await taxonomy.loadTopics(subjectId: subjectId);
+  }
+
+  Future<void> _onQuizTopicChanged(int? topicId) async {
+    setState(() {
+      _filterTopicId = topicId;
+      _filterExamTag = null;
+    });
+    await _loadQuizzes();
+  }
+
+  Future<void> _onExamTagChanged(String? examTag) async {
+    setState(() => _filterExamTag = examTag);
+    await _loadQuizzes();
+  }
+
+  Future<void> _loadQuizzes() async {
+    if (_filterSubjectId == null || _filterTopicId == null) return;
+
+    setState(() {
+      _isLoadingQuizzes = true;
+      _quizLoadError = null;
+    });
+
+    final result = await _quizService.list(
+      subjectId: _filterSubjectId,
+      topicId: _filterTopicId,
+      examTag: _filterExamTag,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _isLoadingQuizzes = false;
+      if (result.isSuccess) {
+        _availableQuizzes = result.quizzes ?? [];
+        // A selection that the new filters exclude has to go, or Save would
+        // send a quiz the admin can no longer see.
+        if (_selectedQuizId != null &&
+            !_availableQuizzes.any((q) => q.id == _selectedQuizId)) {
+          _selectedQuizId = null;
+          _selectedQuiz = null;
+        }
+      } else {
+        _quizLoadError = result.errorMessage;
+      }
+    });
+  }
+
+  Future<void> _onQuizSelected(int? quizId) async {
+    setState(() {
+      _selectedQuizId = quizId;
+      _quizValidationError = null;
+      _selectedQuiz = quizId == null
+          ? null
+          : _availableQuizzes.where((q) => q.id == quizId).firstOrNull;
+    });
+    if (quizId == null) return;
+
+    // Re-read the quiz on its own: the list row's pool count can be stale by
+    // the time an admin gets here, and that number drives the warning.
+    setState(() => _isLoadingSelectedQuiz = true);
+    final result = await _quizService.get(quizId);
+
+    if (!mounted) return;
+    setState(() {
+      _isLoadingSelectedQuiz = false;
+      if (result.isSuccess && result.quiz != null) _selectedQuiz = result.quiz;
+    });
+  }
+
+  /// Creates a quiz inline from the subject/topic/tag already chosen, then
+  /// selects it - so the admin never leaves the lesson sheet.
+  Future<void> _openNewQuizDialog() async {
+    final subjectId = _filterSubjectId;
+    final topicId = _filterTopicId;
+    if (subjectId == null || topicId == null) return;
+
+    final titleController = TextEditingController();
+    final countController = TextEditingController(text: '10');
+    final formKey = GlobalKey<FormState>();
+
+    final created = await showDialog<Quiz>(
+      context: context,
+      builder: (ctx) => _NewQuizDialog(
+        formKey: formKey,
+        titleController: titleController,
+        countController: countController,
+        examTag: _filterExamTag,
+        onSubmit: () async {
+          if (!formKey.currentState!.validate()) return null;
+          return _quizService.create(Quiz(
+            id: 0,
+            title: titleController.text.trim(),
+            subjectId: subjectId,
+            topicId: topicId,
+            examTag: _filterExamTag,
+            questionCount: int.tryParse(countController.text.trim()) ?? 10,
+          ));
+        },
+      ),
+    );
+
+    titleController.dispose();
+    countController.dispose();
+
+    if (created == null || !mounted) return;
+
+    setState(() {
+      _availableQuizzes = [created, ..._availableQuizzes];
+      _quizValidationError = null;
+    });
+    await _onQuizSelected(created.id);
   }
 
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_isUploadingVideo || _isUploadingThumbnail || _isUploadingNote) return; // block save mid-upload
+    if (_isUploadingVideo || _isUploadingThumbnail || _isUploadingNote) return;
+
+    // A quiz lesson has to point at a quiz - the dropdown can't report this
+    // through the form validator, so it's checked here before any request.
+    if (_isQuiz && _selectedQuizId == null) {
+      setState(() => _quizValidationError = 'Pick a quiz for this lesson.');
+      return;
+    }
 
     final provider = context.read<LessonUpdateProvider>();
     final title = _titleController.text.trim();
     final description = _descriptionController.text.trim();
-    final quizRef = _quizRefController.text.trim();
 
-    // Only mark description for removal if it existed before and is now empty.
     final bool removeDescription =
         _isEditMode && _hadInitialDescription && description.isEmpty;
+
+    // Media and the quiz link are mutually exclusive. On a quiz lesson every
+    // media field is omitted (null = "key absent" in the service), and on the
+    // way out of quiz type the link is explicitly nulled to unlink it.
+    final bool removeQuiz = _startedAsQuiz && !_isQuiz;
 
     final bool success = _isEditMode
         ? await provider.updateLesson(
@@ -495,40 +830,56 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       description: description.isEmpty ? null : description,
       removeDescription: removeDescription,
       type: _type,
-      videoUrl: _videoUrl,
-      videoPublicId: _videoPublicId,
-      removeVideo: _videoRemoved,
-      thumbnailUrl: _thumbnailUrl,
-      thumbnailPublicId: _thumbnailPublicId,
-      removeThumbnail: _thumbnailRemoved,
-      noteUrl: _noteUrl,
-      notePublicId: _notePublicId,
-      noteFileType: _noteFileType,
-      removeNote: _noteRemoved,
-      content: quizRef.isEmpty ? null : quizRef,
+      videoUrl: _isQuiz ? null : _videoUrl,
+      videoPublicId: _isQuiz ? null : _videoPublicId,
+      removeVideo: _isQuiz ? false : _videoRemoved,
+      thumbnailUrl: _isQuiz ? null : _thumbnailUrl,
+      thumbnailPublicId: _isQuiz ? null : _thumbnailPublicId,
+      removeThumbnail: _isQuiz ? false : _thumbnailRemoved,
+      noteUrl: _isQuiz ? null : _noteUrl,
+      notePublicId: _isQuiz ? null : _notePublicId,
+      noteFileType: _isQuiz ? null : _noteFileType,
+      removeNote: _isQuiz ? false : _noteRemoved,
       isFreePreview: _isFreePreview,
       accessType: _accessType,
+      status: _status,
+      planIds: _planIds.toList(),
+      quizId: _isQuiz ? _selectedQuizId : null,
+      removeQuiz: removeQuiz,
     )
         : await provider.createLesson(
       chapterId: widget.chapterId,
       title: title,
       description: description.isEmpty ? null : description,
       type: _type,
-      videoUrl: _videoUrl,
-      videoPublicId: _videoPublicId,
-      thumbnailUrl: _thumbnailUrl,
-      thumbnailPublicId: _thumbnailPublicId,
-      noteUrl: _noteUrl,
-      notePublicId: _notePublicId,
-      noteFileType: _noteFileType,
-      content: quizRef.isEmpty ? null : quizRef,
+      videoUrl: _isQuiz ? null : _videoUrl,
+      videoPublicId: _isQuiz ? null : _videoPublicId,
+      thumbnailUrl: _isQuiz ? null : _thumbnailUrl,
+      thumbnailPublicId: _isQuiz ? null : _thumbnailPublicId,
+      noteUrl: _isQuiz ? null : _noteUrl,
+      notePublicId: _isQuiz ? null : _notePublicId,
+      noteFileType: _isQuiz ? null : _noteFileType,
       displayOrder: widget.initialDisplayOrder,
       isFreePreview: _isFreePreview,
       accessType: _accessType,
+      status: _status,
+      planIds: _planIds.toList(),
+      quizId: _isQuiz ? _selectedQuizId : null,
     );
 
     if (!mounted) return;
-    if (success) Navigator.pop(context, true);
+    if (success) {
+      if (!_isQuiz) {
+        // Persisted onto the lesson - dispose() must not delete them.
+        _freshVideoPublicId = null;
+        _freshThumbnailPublicId = null;
+        _freshNotePublicId = null;
+      }
+      // On a quiz lesson the media fields were omitted, so any upload made
+      // in this session is unreferenced. Leaving the ids tracked lets
+      // dispose() clean them off Cloudinary.
+      Navigator.pop(context, true);
+    }
   }
 
   InputDecoration _inputDecoration(String hint, {IconData? icon}) {
@@ -558,7 +909,174 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     }
   }
 
-  /// Small segmented toggle used to pick "Upload" vs "Paste URL".
+  // ── Quiz picker UI ───────────────────────────────────────────────
+
+  Widget _quizPicker() {
+    final taxonomy = context.watch<SubjectTopicProvider>();
+    final examTags = examTagsOf(_availableQuizzes);
+    final canPickTopic = _filterSubjectId != null;
+    final canPickQuiz = _filterTopicId != null;
+    final legacyRef = widget.initialContent?.trim() ?? '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _FieldLabel('Quiz'),
+        const SizedBox(height: 6),
+        const Text(
+          'Narrow by subject and topic, then pick the quiz this lesson runs.',
+          style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
+        ),
+        const SizedBox(height: 10),
+
+        // A lesson saved before quizzes existed still carries its old
+        // free-text reference. Showing it is the only clue an admin has as
+        // to which quiz to pick now.
+        if (legacyRef.isNotEmpty && _selectedQuizId == null) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: LmsColors.bg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: LmsColors.border),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.history_rounded, size: 15, color: LmsColors.textGrey),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Previously referenced "$legacyRef". Pick a quiz to replace it.',
+                    style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+
+        DropdownButtonFormField<int>(
+          initialValue: _filterSubjectId,
+          isExpanded: true,
+          decoration: _inputDecoration('Subject', icon: Icons.folder_outlined),
+          items: taxonomy.subjects
+              .map((s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
+              .toList(),
+          onChanged: _onQuizSubjectChanged,
+        ),
+        const SizedBox(height: 10),
+
+        DropdownButtonFormField<int>(
+          initialValue: _filterTopicId,
+          isExpanded: true,
+          decoration: _inputDecoration(
+            canPickTopic ? 'Topic' : 'Topic (pick a subject first)',
+            icon: Icons.label_outline_rounded,
+          ),
+          items: taxonomy.topics
+              .map((t) => DropdownMenuItem(value: t.id, child: Text(t.name)))
+              .toList(),
+          onChanged: canPickTopic ? _onQuizTopicChanged : null,
+        ),
+        const SizedBox(height: 10),
+
+        // Exam tags are derived from the quizzes already loaded - there is no
+        // endpoint that lists them.
+        if (examTags.isNotEmpty) ...[
+          DropdownButtonFormField<String?>(
+            initialValue: _filterExamTag,
+            isExpanded: true,
+            decoration: _inputDecoration('Exam tag (optional)', icon: Icons.sell_outlined),
+            items: [
+              const DropdownMenuItem<String?>(value: null, child: Text('Any exam tag')),
+              ...examTags.map((t) => DropdownMenuItem<String?>(value: t, child: Text(t))),
+            ],
+            onChanged: _onExamTagChanged,
+          ),
+          const SizedBox(height: 10),
+        ],
+
+        if (_isLoadingQuizzes)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 14),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2.2, color: LmsColors.primary),
+              ),
+            ),
+          )
+        else
+          DropdownButtonFormField<int>(
+            initialValue: _selectedQuizId,
+            isExpanded: true,
+            decoration: _inputDecoration(
+              !canPickQuiz
+                  ? 'Quiz (pick a topic first)'
+                  : _availableQuizzes.isEmpty
+                      ? 'No quizzes match these filters'
+                      : 'Select a quiz',
+              icon: Icons.quiz_outlined,
+            ),
+            items: _availableQuizzes
+                .map((q) => DropdownMenuItem(value: q.id, child: Text(q.title)))
+                .toList(),
+            onChanged: canPickQuiz ? _onQuizSelected : null,
+          ),
+
+        if (_quizLoadError != null) ...[
+          const SizedBox(height: 8),
+          Text(_quizLoadError!,
+              style: const TextStyle(color: LmsColors.error, fontSize: 12.5)),
+        ],
+        if (_quizValidationError != null) ...[
+          const SizedBox(height: 8),
+          Text(_quizValidationError!,
+              style: const TextStyle(color: LmsColors.error, fontSize: 12.5)),
+        ],
+
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: canPickQuiz ? _openNewQuizDialog : null,
+            icon: const Icon(Icons.add_rounded, size: 16),
+            label: const Text('New Quiz',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+          ),
+        ),
+
+        if (_selectedQuiz != null || _isLoadingSelectedQuiz) ...[
+          const SizedBox(height: 4),
+          _QuizSummaryChip(
+            quiz: _selectedQuiz,
+            isLoading: _isLoadingSelectedQuiz,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _planPicker() {
+    if (widget.courseId == null) {
+      return const Text(
+        'Plan list unavailable here - this lesson will require any active subscription.',
+        style: TextStyle(fontSize: 12, color: LmsColors.textGrey),
+      );
+    }
+
+    // Same selector the standalone subscription sheet uses, so create / edit /
+    // delete of a plan behaves identically wherever you are.
+    return LessonPlanSelector(
+      courseId: widget.courseId!,
+      selectedPlanIds: _planIds,
+      attachedPlans: widget.initialPlans,
+      onChanged: (ids) => setState(() => _planIds = ids),
+    );
+  }
+
   Widget _sourceModeToggle() {
     Widget segment(String label, IconData icon, _VideoSourceMode mode) {
       final isSelected = _videoSourceMode == mode;
@@ -657,7 +1175,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 ),
                 const SizedBox(height: 18),
 
-                // ── Description (NEW) ──
                 const _FieldLabel('Description (optional)'),
                 const SizedBox(height: 6),
                 TextFormField(
@@ -665,6 +1182,33 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   maxLines: 3,
                   minLines: 2,
                   decoration: _inputDecoration('Briefly describe what this lesson covers'),
+                ),
+                const SizedBox(height: 18),
+
+                // ── Status (NEW) ──
+                const _FieldLabel('Publish Status'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: LessonStatus.values.map((s) {
+                    final isSelected = s == _status;
+                    return ChoiceChip(
+                      label: Text(s.apiValue.toUpperCase()),
+                      selected: isSelected,
+                      onSelected: (_) => setState(() => _status = s),
+                      labelStyle: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: isSelected ? Colors.white : LmsColors.textDark,
+                      ),
+                      selectedColor: s == LessonStatus.published ? LmsColors.success : (s == LessonStatus.draft ? LmsColors.primary : LmsColors.textGrey),
+                      backgroundColor: LmsColors.bg,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: BorderSide(color: isSelected ? Colors.transparent : LmsColors.border),
+                      ),
+                    );
+                  }).toList(),
                 ),
                 const SizedBox(height: 18),
 
@@ -677,7 +1221,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                     return ChoiceChip(
                       label: Text(t.apiValue),
                       selected: isSelected,
-                      onSelected: (_) => setState(() => _type = t),
+                      onSelected: (_) => _onTypeChanged(t),
                       labelStyle: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
@@ -692,9 +1236,11 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                     );
                   }).toList(),
                 ),
-                //const SizedBox(height: 18),
 
-                //── Thumbnail (NEW) ──
+                // Media and the quiz link are mutually exclusive - on a quiz
+                // lesson these come out of the tree rather than being
+                // disabled, so there's nothing to half-fill.
+                if (!_isQuiz) ...[
                 const _FieldLabel('Thumbnail Image (optional)'),
                 const SizedBox(height: 6),
                 _UploadTile(
@@ -718,7 +1264,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 ),
                 const SizedBox(height: 18),
 
-                // ── Video: upload OR paste URL ──
                 const _FieldLabel('Class Video (optional)'),
                 const SizedBox(height: 6),
                 _sourceModeToggle(),
@@ -748,7 +1293,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                     validator: (value) {
                       if (_videoSourceMode != _VideoSourceMode.url) return null;
                       final v = value?.trim() ?? '';
-                      if (v.isEmpty) return null; // video is optional
+                      if (v.isEmpty) return null;
                       final uri = Uri.tryParse(v);
                       if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
                         return 'Enter a valid URL';
@@ -758,7 +1303,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   ),
                 const SizedBox(height: 16),
 
-                // ── Note upload (PDF / DOC / DOCX) ──
                 const _FieldLabel('Notes (PDF or Word document, optional)'),
                 const SizedBox(height: 6),
                 _UploadTile(
@@ -774,14 +1318,10 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   onRemove: _removeNote,
                 ),
                 const SizedBox(height: 16),
+                ],
 
-                if (_type == LessonType.quiz) ...[
-                  const _FieldLabel('Quiz Reference'),
-                  const SizedBox(height: 6),
-                  TextFormField(
-                    controller: _quizRefController,
-                    decoration: _inputDecoration('Question bank / quiz ID', icon: Icons.quiz_outlined),
-                  ),
+                if (_isQuiz) ...[
+                  _quizPicker(),
                   const SizedBox(height: 16),
                 ],
 
@@ -800,7 +1340,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                           color: isSelected ? Colors.white : LmsColors.textDark,
                         ),
                         selected: isSelected,
-                        onSelected: (_) => setState(() => _accessType = a),
+                        onSelected: (_) => _setAccessType(a),
                         labelStyle: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
@@ -816,6 +1356,13 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                     );
                   }).toList(),
                 ),
+
+                if (_accessType == LessonAccessType.premium) ...[
+                  const SizedBox(height: 16),
+                  const _FieldLabel('Required Plans'),
+                  const SizedBox(height: 6),
+                  _planPicker(),
+                ],
                 const SizedBox(height: 16),
 
                 Container(
@@ -877,13 +1424,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   }
 }
 
-
-
-
-/// Shows a confirmation dialog, then deletes the lesson via
-/// [LessonUpdateProvider] if confirmed. Returns true if the lesson was
-/// deleted, false/null otherwise — use the return value to remove the row
-/// from your list or trigger a refresh.
 Future<bool> confirmAndDeleteLesson(
     BuildContext context, {
       required int chapterId,
@@ -935,115 +1475,204 @@ Future<bool> confirmAndDeleteLesson(
   return success;
 }
 
-/// Edit + Delete icon buttons for a lesson row in your listing UI.
-class LessonRowActions extends StatefulWidget {
-  final int chapterId;
-  final int lessonId;
-  final String title;
-  final String? description;
-  final LessonType type;
-  final String? videoUrl;
-  final String? videoPublicId;
-  final String? thumbnailUrl;
-  final String? thumbnailPublicId;
-  final String? noteUrl;
-  final String? notePublicId;
-  final String? noteFileType;
-  final String? content;
-  final bool isFreePreview;
-  final LessonAccessType accessType;
-  final int displayOrder;
 
-  /// Called after a successful edit or delete so the parent list can refresh.
-  final VoidCallback onChanged;
+/// Summary of the linked quiz: title plus the live pool count, so an admin
+/// can see a thin question pool before students do.
+class _QuizSummaryChip extends StatelessWidget {
+  final Quiz? quiz;
+  final bool isLoading;
 
-  const LessonRowActions({
-    super.key,
-    required this.chapterId,
-    required this.lessonId,
-    required this.title,
-    this.description,
-    required this.type,
-    this.videoUrl,
-    this.videoPublicId,
-    this.thumbnailUrl,
-    this.thumbnailPublicId,
-    this.noteUrl,
-    this.notePublicId,
-    this.noteFileType,
-    this.content,
-    required this.isFreePreview,
-    required this.accessType,
-    required this.displayOrder,
-    required this.onChanged,
+  const _QuizSummaryChip({required this.quiz, required this.isLoading});
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: LmsColors.primary),
+            ),
+            SizedBox(width: 8),
+            Text('Loading quiz...',
+                style: TextStyle(fontSize: 12, color: LmsColors.textGrey)),
+          ],
+        ),
+      );
+    }
+
+    final q = quiz;
+    if (q == null) return const SizedBox.shrink();
+
+    final pool = q.activeQuestionPool;
+    final underfilled = q.isUnderfilled;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: underfilled ? LmsColors.errorBg : LmsColors.primarySoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: underfilled ? LmsColors.errorBorder : LmsColors.primary.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            underfilled ? Icons.warning_amber_rounded : Icons.quiz_outlined,
+            size: 16,
+            color: underfilled ? LmsColors.error : LmsColors.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  q.title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: underfilled ? LmsColors.error : LmsColors.primary,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  pool == null
+                      ? '${q.questionCount} questions per attempt'
+                      : underfilled
+                          ? 'Only $pool active question${pool == 1 ? '' : 's'} available '
+                              'for ${q.questionCount} per attempt'
+                          : '${q.questionCount} of $pool active questions per attempt',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: underfilled ? LmsColors.error : LmsColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Inline quiz creation. Subject, topic and exam tag are inherited from what
+/// the lesson sheet already has selected, so this only asks for a title and a
+/// question count.
+class _NewQuizDialog extends StatefulWidget {
+  final GlobalKey<FormState> formKey;
+  final TextEditingController titleController;
+  final TextEditingController countController;
+  final String? examTag;
+  final Future<QuizResult?> Function() onSubmit;
+
+  const _NewQuizDialog({
+    required this.formKey,
+    required this.titleController,
+    required this.countController,
+    required this.examTag,
+    required this.onSubmit,
   });
 
   @override
-  State<LessonRowActions> createState() => _LessonRowActionsState();
+  State<_NewQuizDialog> createState() => _NewQuizDialogState();
 }
 
-class _LessonRowActionsState extends State<LessonRowActions> {
-  bool _isDeleting = false;
+class _NewQuizDialogState extends State<_NewQuizDialog> {
+  bool _isSaving = false;
+  String? _errorMessage;
 
-  Future<void> _handleEdit() async {
-    final result = await showAddEditLessonSheet(
-      context,
-      chapterId: widget.chapterId,
-      lessonId: widget.lessonId,
-      initialTitle: widget.title,
-      initialDescription: widget.description,
-      initialType: widget.type,
-      initialVideoUrl: widget.videoUrl,
-      initialVideoPublicId: widget.videoPublicId,
-      initialThumbnailUrl: widget.thumbnailUrl,
-      initialThumbnailPublicId: widget.thumbnailPublicId,
-      initialNoteUrl: widget.noteUrl,
-      initialNotePublicId: widget.notePublicId,
-      initialNoteFileType: widget.noteFileType,
-      initialContent: widget.content,
-      initialIsFreePreview: widget.isFreePreview,
-      initialAccessType: widget.accessType,
-      initialDisplayOrder: widget.displayOrder,
-    );
-    if (result == true) widget.onChanged();
-  }
+  Future<void> _submit() async {
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
 
-  Future<void> _handleDelete() async {
-    setState(() => _isDeleting = true);
-    final deleted = await confirmAndDeleteLesson(
-      context,
-      chapterId: widget.chapterId,
-      lessonId: widget.lessonId,
-      lessonTitle: widget.title,
-    );
+    final result = await widget.onSubmit();
+
     if (!mounted) return;
-    setState(() => _isDeleting = false);
-    if (deleted) widget.onChanged();
+    if (result == null) {
+      setState(() => _isSaving = false); // validation failed, message is inline
+      return;
+    }
+    if (result.isSuccess && result.quiz != null) {
+      Navigator.pop(context, result.quiz);
+      return;
+    }
+    setState(() {
+      _isSaving = false;
+      _errorMessage = result.errorMessage ?? 'Failed to create quiz';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.edit_outlined, size: 19, color: LmsColors.textGrey),
-          onPressed: _isDeleting ? null : _handleEdit,
-          tooltip: 'Edit lesson',
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: const Text('New Quiz', style: TextStyle(fontWeight: FontWeight.w800)),
+      content: Form(
+        key: widget.formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextFormField(
+              controller: widget.titleController,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Quiz title'),
+              validator: (value) =>
+                  (value == null || value.trim().isEmpty) ? 'Title is required' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: widget.countController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Questions per attempt'),
+              validator: (value) {
+                final n = int.tryParse(value?.trim() ?? '');
+                if (n == null || n < 1) return 'Enter a whole number of 1 or more';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            Text(
+              widget.examTag == null
+                  ? 'Uses the subject and topic selected above.'
+                  : 'Uses the subject, topic and "${widget.examTag}" tag selected above.',
+              style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 10),
+              Text(_errorMessage!,
+                  style: const TextStyle(color: LmsColors.error, fontSize: 12.5)),
+            ],
+          ],
         ),
-        _isDeleting
-            ? const SizedBox(
-          width: 40,
-          height: 40,
-          child: Padding(
-            padding: EdgeInsets.all(11),
-            child: CircularProgressIndicator(strokeWidth: 2, color: LmsColors.error),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _isSaving ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: LmsColors.primary,
+            foregroundColor: Colors.white,
           ),
-        )
-            : IconButton(
-          icon: const Icon(Icons.delete_outline_rounded, size: 19, color: LmsColors.error),
-          onPressed: _handleDelete,
-          tooltip: 'Delete lesson',
+          child: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Create'),
         ),
       ],
     );

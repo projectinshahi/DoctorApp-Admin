@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../core/const/local_storegae.dart';
+import '../core/const/api_constant.dart';
 
 // TODO: adjust this import path to wherever AdminLocalStorage actually
 
@@ -36,7 +37,7 @@ class CourseTypeResult {
 class CourseTypeService {
   final String baseUrl;
 
-  CourseTypeService({this.baseUrl = 'http://localhost:3000'});
+  CourseTypeService({this.baseUrl = ApiConstant.root});
 
   Future<String?> _getToken() async {
     final String? adminToken = await AdminLocalStorage.getToken();

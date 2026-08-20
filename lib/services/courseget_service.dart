@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/const/local_storegae.dart';
 import '../models/course_get_model.dart';
+import '../core/const/api_constant.dart';
 
 class CourseListGetService {
   Future<List<CourseListGetModel>> fetchCourses({
@@ -35,7 +36,7 @@ class CourseListGetService {
       queryParams['search'] = search;
     }
 
-    final uri = Uri.parse('http://localhost:3000/api/courses')
+    final uri = Uri.parse('${ApiConstant.baseUrl}/courses')
         .replace(queryParameters: queryParams);
 
     final response = await http.get(

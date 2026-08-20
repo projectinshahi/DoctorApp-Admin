@@ -5,9 +5,10 @@ import 'package:http/http.dart' as http;
 import '../core/const/local_storegae.dart';
 import '../models/Course_model.dart';
 import '../models/course_details_model.dart';
+import '../core/const/api_constant.dart';
 
 class CourseService {
-  static const String _baseUrl = "http://localhost:3000/api/courses";
+  static const String _baseUrl = '${ApiConstant.baseUrl}/courses';
 
   Future<CourseModel> createCourse({
     required String title,

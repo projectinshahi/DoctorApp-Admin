@@ -81,7 +81,7 @@ class CourseModel {
       difficulty: json['difficulty'],
       status: json['status'],
       accessType: json['accessType'],
-      displayOrder: json['displayOrder'],
+      displayOrder: json['displayOrder'] ?? 0,
       createdAt: json['createdAt'],
       updatedAt: json['updatedAt'],
       courseTypes: (json['courseTypes'] as List<dynamic>? ?? [])

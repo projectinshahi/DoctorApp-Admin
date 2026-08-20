@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../core/const/local_storegae.dart';
+import '../models/chapter_summary_model.dart';
+import '../core/const/api_constant.dart';
 
 /// Result wrapper, same pattern as CourseTypeResult.
 class ChapterResult {
@@ -18,6 +20,20 @@ class ChapterResult {
       ChapterResult._(isSuccess: false, errorMessage: message);
 }
 
+class ChapterListResult {
+  final bool isSuccess;
+  final List<ChapterSummary>? chapters;
+  final String? errorMessage;
+
+  ChapterListResult._({required this.isSuccess, this.chapters, this.errorMessage});
+
+  factory ChapterListResult.success(List<ChapterSummary> chapters) =>
+      ChapterListResult._(isSuccess: true, chapters: chapters);
+
+  factory ChapterListResult.failure(String message) =>
+      ChapterListResult._(isSuccess: false, errorMessage: message);
+}
+
 /// Chapters ("Syllabus") live under a course type (exam type):
 ///
 /// CREATE -> POST   /api/course-types/:courseTypeId/chapters
@@ -30,7 +46,7 @@ class ChapterResult {
 class ChapterService {
   final String baseUrl;
 
-  ChapterService({this.baseUrl = 'http://localhost:3000'});
+  ChapterService({this.baseUrl = ApiConstant.root});
 
   Future<String?> _getToken() async {
     final String? adminToken = await AdminLocalStorage.getToken();
@@ -53,6 +69,89 @@ class ChapterService {
     }
     return ChapterResult.failure(message);
   }
+
+  /// Long JSON bodies get truncated by the console, so they are printed in
+  /// chunks - same helper CourseDetailsService uses.
+  void _log(String message) {
+    const int chunk = 800;
+    for (int i = 0; i < message.length; i += chunk) {
+      print(message.substring(i, i + chunk > message.length ? message.length : i + chunk));
+    }
+  }
+
+  /// Lists the chapters under a course type.
+  ///
+  /// GET /api/course-types/:courseTypeId/chapters
+  ///
+  /// Lets the app rebuild the syllabus one level at a time when the full
+  /// course tree (/api/courses/:id) is unavailable. Every call prints its
+  /// URL, status and raw body to the terminal - this is the route that has
+  /// to be checked per course type, so it is never worth guessing at.
+  Future<ChapterListResult> getChapters({required int courseTypeId}) async {
+    final url = '$baseUrl/api/course-types/$courseTypeId/chapters';
+
+    _log('----------------------------------');
+    _log('[CHAPTERS] GET $url');
+    _log('[CHAPTERS] courseTypeId: $courseTypeId');
+
+    final adminToken = await _getToken();
+    if (adminToken == null) {
+      _log('[CHAPTERS] no admin token - request not sent');
+      _log('----------------------------------');
+      return ChapterListResult.failure('Session expired. Please log in again.');
+    }
+
+    try {
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $adminToken',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      _log('[CHAPTERS] status: ${response.statusCode}');
+      _log('[CHAPTERS] body:');
+      _log(response.body.isEmpty ? '(empty body)' : response.body);
+
+      final dynamic decoded =
+          response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+
+      if (response.statusCode == 200) {
+        final chapters = parseChapterSummaries(decoded);
+        _log('[CHAPTERS] parsed ${chapters.length} chapter(s) '
+            'for courseTypeId $courseTypeId');
+        for (final c in chapters) {
+          _log('   - [${c.id}] "${c.title}" order=${c.displayOrder} '
+              'lessons=${c.lessonCount}');
+        }
+        _log('----------------------------------');
+        return ChapterListResult.success(chapters);
+      }
+
+      String message = 'Failed to load chapters (status ${response.statusCode})';
+      if (decoded is Map && decoded['error'] is Map && decoded['error']['message'] != null) {
+        message = decoded['error']['message'].toString();
+      }
+      _log('[CHAPTERS] failed: $message');
+      _log('----------------------------------');
+      return ChapterListResult.failure(message);
+    } on http.ClientException catch (e) {
+      // On web this is also what a blocked CORS pre-flight looks like.
+      _log('[CHAPTERS] network/CORS error: $e');
+      _log('----------------------------------');
+      return ChapterListResult.failure('Network error. Please check your connection.');
+    } on FormatException catch (e) {
+      _log('[CHAPTERS] JSON parse error: $e');
+      _log('----------------------------------');
+      return ChapterListResult.failure('Unexpected response from server.');
+    } catch (e) {
+      _log('[CHAPTERS] request failed: $e');
+      _log('----------------------------------');
+      return ChapterListResult.failure('Something went wrong: $e');
+    }
+  }
+
 
   /// Creates a new chapter (syllabus item) under [courseTypeId].
   /// If [displayOrder] is omitted, pass the current chapter count from

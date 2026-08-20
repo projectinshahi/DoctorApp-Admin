@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'lesson_detail_model.dart'; // LessonPlanSummary + shared plan parsers
 
 CourseDetailsResponse courseDetailsResponseFromJson(String str) =>
     CourseDetailsResponse.fromJson(json.decode(str));
@@ -35,8 +36,8 @@ class CourseDetails {
   final DateTime createdAt;
   final DateTime updatedAt;
   final dynamic admin;
-  final List<CourseType> courseTypes; // NEW — replaces subjects
-  final List<Chapter> chapters;       // standalone chapters (no courseType)
+  final List<CourseType> courseTypes;
+  final List<Chapter> chapters;
   final int chapterCount;
   final int lessonCount;
 
@@ -60,8 +61,6 @@ class CourseDetails {
     required this.lessonCount,
   });
 
-  // Convenience getter for the UI: true if this is a grouped course
-  // (e.g. "Gulf license exam (GP)") rather than a standalone one.
   bool get hasCourseTypes => courseTypes.isNotEmpty;
 
   factory CourseDetails.fromJson(Map<String, dynamic> json) => CourseDetails(
@@ -113,7 +112,6 @@ class CourseDetails {
   };
 }
 
-// NEW: replaces the old Subject model
 class CourseType {
   final int id;
   final String title;
@@ -158,7 +156,6 @@ class CourseType {
   };
 }
 
-// NEW: typed Chapter (was `List<dynamic>` before)
 class Chapter {
   final int id;
   final String title;
@@ -191,14 +188,26 @@ class Chapter {
   };
 }
 
-// NEW: typed Lesson
 class Lesson {
   final int id;
   final String title;
-  final String type; // video | text | quiz
+  final String type;
   final String? content;
   final int displayOrder;
   final bool isFreePreview;
+  final String status; // NEW
+  final String accessType; // NEW
+  final int? planId; // NEW - first/legacy plan, kept for older payloads
+  /// Every plan that unlocks this lesson. Empty on a premium lesson means
+  /// "any active subscription".
+  final List<LessonPlanSummary> plans; // NEW
+  final Set<int> planIds; // NEW
+  final String? videoUrl; // NEW - backend must include this in the lessons payload
+
+  /// Whether the payload actually carried a videoUrl key at all.
+  /// Lets us tell "no video uploaded" apart from "the API never told us",
+  /// so the list never claims a video exists when it doesn't.
+  final bool videoKnown; // NEW
 
   Lesson({
     required this.id,
@@ -207,7 +216,20 @@ class Lesson {
     this.content,
     required this.displayOrder,
     required this.isFreePreview,
+    required this.status, // NEW
+    required this.accessType, // NEW
+    this.planId, // NEW
+    this.plans = const [], // NEW
+    this.planIds = const {}, // NEW
+    this.videoUrl, // NEW
+    this.videoKnown = false, // NEW
   });
+
+  /// null  -> the API didn't include videoUrl, so we make no claim
+  /// true  -> a video is actually attached
+  /// false -> definitively no video, even though the lesson may be type 'video'
+  bool? get hasVideo =>
+      !videoKnown ? null : (videoUrl != null && videoUrl!.isNotEmpty);
 
   factory Lesson.fromJson(Map<String, dynamic> json) => Lesson(
     id: json["id"],
@@ -216,6 +238,13 @@ class Lesson {
     content: json["content"],
     displayOrder: json["displayOrder"] ?? 0,
     isFreePreview: json["isFreePreview"] ?? false,
+    status: json["status"] ?? 'draft', // NEW
+    accessType: json["accessType"] ?? 'free', // NEW
+    planId: json["planId"], // NEW
+    plans: parseLessonPlans(json), // NEW
+    planIds: parseLessonPlanIds(json), // NEW
+    videoUrl: json["videoUrl"], // NEW
+    videoKnown: json.containsKey("videoUrl"), // NEW
   );
 
   Map<String, dynamic> toJson() => {
@@ -225,5 +254,10 @@ class Lesson {
     "content": content,
     "displayOrder": displayOrder,
     "isFreePreview": isFreePreview,
+    "status": status, // NEW
+    "accessType": accessType, // NEW
+    "planId": planId, // NEW
+    "planIds": planIds.toList(), // NEW
+    "videoUrl": videoUrl, // NEW
   };
 }
