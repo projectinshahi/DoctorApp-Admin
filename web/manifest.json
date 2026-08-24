@@ -1,11 +1,11 @@
 {
-    "name": "admin_drapp",
-    "short_name": "admin_drapp",
+    "name": "dr.skm's academy",
+    "short_name": "dr.skm's academy",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Course, lesson and question bank administration.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -260,17 +260,26 @@ class QuestionUpdateProvider extends ChangeNotifier {
     return statusResult.isSuccess;
   }
 
-  /// Expected to fail with the backend's 409 until the quiz module ships.
-  /// The message lands in [errorMessage] untouched so the UI shows it.
+  /// How many quiz pools shrank on the last successful delete. Null when the
+  /// backend didn't say.
+  int? lastAffectedQuizzes;
+
+  /// Deletion cascades the question's options and tags and cannot be undone.
+  /// A 409 message lands in [errorMessage] untouched so the UI shows it.
   Future<bool> deleteQuestion(int questionId) async {
     isDeleting = true;
     errorMessage = null;
+    lastAffectedQuizzes = null;
     notifyListeners();
 
     final result = await _service.deleteQuestion(questionId);
 
     isDeleting = false;
-    if (!result.isSuccess) errorMessage = result.errorMessage;
+    if (result.isSuccess) {
+      lastAffectedQuizzes = result.affectedQuizzes;
+    } else {
+      errorMessage = result.errorMessage;
+    }
     notifyListeners();
     return result.isSuccess;
   }

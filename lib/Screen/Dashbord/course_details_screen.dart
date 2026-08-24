@@ -20,11 +20,20 @@ import 'lesson_subscription_sheet.dart';
 import 'course_details/course_details_widgets.dart';
 import 'course_details/fallback_course_view.dart';
 import 'course_details/full_course_view.dart';
+import '../../widget/shimmer_loading.dart';
 
 class CourseDetailsScreen extends StatefulWidget {
   final int courseId;
 
-  const CourseDetailsScreen({Key? key, required this.courseId}) : super(key: key);
+  /// Opened from the dashboard listing, where the course is there to be read,
+  /// not managed. Every add / edit / delete affordance leaves the tree.
+  final bool readOnly;
+
+  const CourseDetailsScreen({
+    Key? key,
+    required this.courseId,
+    this.readOnly = false,
+  }) : super(key: key);
 
   @override
   State<CourseDetailsScreen> createState() => _CourseDetailsScreenState();
@@ -262,8 +271,8 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       initialNoteUrl: full.noteUrl,
       initialNotePublicId: full.notePublicId,
       initialNoteFileType: full.noteFileType,
-      initialContent: full.content, // legacy reference, read-only
       initialQuizId: full.quizId,
+      initialQuizTitle: full.quiz?.title,
       initialIsFreePreview: full.isFreePreview,
       initialAccessType: full.accessTypeEnum,
       initialStatus: full.statusEnum,
@@ -357,8 +366,9 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       body: Consumer<CourseDetailsProvider>(
         builder: (context, provider, child) {
           if (provider.isLoading) {
-            return const Center(
-              child: CircularProgressIndicator(color: LmsColors.primary),
+            return const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: ShimmerListSkeleton(rowCount: 4),
             );
           }
 
@@ -374,7 +384,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
               reason: provider.degradedReason!,
               courseId: widget.courseId,
               onRetry: _refresh,
-              onAddExamType: _openAddSheet,
+              onAddExamType: widget.readOnly ? null : _openAddSheet,
             );
           }
 
@@ -400,7 +410,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                       SectionTitle(
                         'Exam Types',
                         count: course.courseTypes.length,
-                        onAdd: _openAddSheet,
+                        onAdd: widget.readOnly ? null : _openAddSheet,
                       ),
                       const SizedBox(height: 12),
 
@@ -411,6 +421,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                               (courseType) => CourseTypeCard(
                             courseType: courseType,
                             courseTitle: course.title,
+                            readOnly: widget.readOnly,
                             planTitles: _planTitles,
                             statusColor: _statusColor(courseType.status),
                             onEdit: () => _openEditSheet(courseType),
@@ -448,11 +459,19 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                                 chapter: c,
                                 chapterNumber: index + 1,
                                 planTitles: _planTitles,
-                                onAddLesson: () => _openAddLessonSheet(c),
-                                onEditLesson: (lesson) => _openEditLessonSheet(c, lesson),
-                                onDeleteLesson: (lesson) => _confirmDeleteLesson(c, lesson),
-                                onEditLessonSubscription: (lesson) =>
-                                    _openLessonSubscriptionSheet(c, lesson),
+                                onAddLesson: widget.readOnly
+                                    ? null
+                                    : () => _openAddLessonSheet(c),
+                                onEditLesson: widget.readOnly
+                                    ? null
+                                    : (lesson) => _openEditLessonSheet(c, lesson),
+                                onDeleteLesson: widget.readOnly
+                                    ? null
+                                    : (lesson) => _confirmDeleteLesson(c, lesson),
+                                onEditLessonSubscription: widget.readOnly
+                                    ? null
+                                    : (lesson) =>
+                                        _openLessonSubscriptionSheet(c, lesson),
                               ),
                             );
                           }),

@@ -1,4 +1,5 @@
 import '../services/lesson_services.dart';
+import 'quiz_model.dart';
 
 /// Minimal parent-chapter info, only present when the lesson was fetched
 /// with ?includeChapter=true.
@@ -104,6 +105,11 @@ class LessonDetail {
 
   /// The linked Quiz, set only when type == 'quiz'.
   final int? quizId;
+
+  /// The linked quiz itself, nested by GET /api/lessons/:id. Null on every
+  /// non-quiz lesson, and on a quiz lesson with nothing linked yet - so it
+  /// carries the live pool counters without a second request.
+  final Quiz? quiz;
   final int displayOrder;
   final bool isFreePreview;
   final String accessType; // raw API value: 'free' | 'premium'
@@ -138,6 +144,7 @@ class LessonDetail {
     this.noteFileType,
     this.content,
     this.quizId,
+    this.quiz,
     required this.displayOrder,
     required this.isFreePreview,
     required this.accessType,
@@ -166,6 +173,9 @@ class LessonDetail {
       noteFileType: json['noteFileType'] as String?,
       content: json['content'] as String?,
       quizId: (json['quizId'] as num?)?.toInt(),
+      quiz: json['quiz'] is Map<String, dynamic>
+          ? Quiz.fromJson(json['quiz'] as Map<String, dynamic>)
+          : null,
       displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
       isFreePreview: json['isFreePreview'] as bool? ?? false,
       accessType: json['accessType'] as String? ?? 'free',

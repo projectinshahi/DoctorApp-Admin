@@ -204,6 +204,13 @@ class Lesson {
   final Set<int> planIds; // NEW
   final String? videoUrl; // NEW - backend must include this in the lessons payload
 
+  /// The quiz this lesson serves, when the payload says. Parsed defensively:
+  /// the course-details response may or may not nest it, and a lesson row
+  /// showing nothing is better than one that guesses.
+  final int? quizId;
+  final String? quizSubjectName;
+  final String? quizTopicName;
+
   /// Whether the payload actually carried a videoUrl key at all.
   /// Lets us tell "no video uploaded" apart from "the API never told us",
   /// so the list never claims a video exists when it doesn't.
@@ -223,7 +230,19 @@ class Lesson {
     this.planIds = const {}, // NEW
     this.videoUrl, // NEW
     this.videoKnown = false, // NEW
+    this.quizId,
+    this.quizSubjectName,
+    this.quizTopicName,
   });
+
+  /// "Internal Med · Cardiology", or just whichever half arrived.
+  String? get quizTaxonomyLabel {
+    final parts = [quizSubjectName, quizTopicName]
+        .whereType<String>()
+        .where((p) => p.trim().isNotEmpty)
+        .toList();
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
 
   /// null  -> the API didn't include videoUrl, so we make no claim
   /// true  -> a video is actually attached
@@ -245,7 +264,19 @@ class Lesson {
     planIds: parseLessonPlanIds(json), // NEW
     videoUrl: json["videoUrl"], // NEW
     videoKnown: json.containsKey("videoUrl"), // NEW
+    quizId: (json["quizId"] as num?)?.toInt(),
+    quizSubjectName: _nestedName(json["quiz"], "subject"),
+    quizTopicName: _nestedName(json["quiz"], "topic"),
   );
+
+  /// Reads quiz.subject.name / quiz.topic.name without assuming either level
+  /// is present - every hop is optional in this payload.
+  static String? _nestedName(dynamic quiz, String key) {
+    if (quiz is! Map) return null;
+    final nested = quiz[key];
+    if (nested is Map) return nested['name'] as String?;
+    return null;
+  }
 
   Map<String, dynamic> toJson() => {
     "id": id,

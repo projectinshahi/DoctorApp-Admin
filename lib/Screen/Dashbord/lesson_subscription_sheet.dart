@@ -559,7 +559,9 @@ class _LessonSubscriptionSheetState extends State<_LessonSubscriptionSheet> {
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: LmsColors.border),
                 ),
-                child: SwitchListTile(
+                child: Material(
+                  color: Colors.transparent,
+                  child: SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   value: _isFreePreview,
                   onChanged: (v) => setState(() => _isFreePreview = v),
@@ -569,6 +571,7 @@ class _LessonSubscriptionSheetState extends State<_LessonSubscriptionSheet> {
                     'Open to everyone even when the lesson is premium.',
                     style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
                   ),
+                ),
                 ),
               ),
 

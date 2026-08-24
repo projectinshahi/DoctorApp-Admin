@@ -11,10 +11,23 @@ class QuestionResult {
   final Question? question;
   final String? errorMessage;
 
-  QuestionResult._({required this.isSuccess, this.question, this.errorMessage});
+  /// How many quiz pools shrank as a result of a delete. Null when the
+  /// response didn't report it (every endpoint other than delete).
+  final int? affectedQuizzes;
 
-  factory QuestionResult.success(Question? question) =>
-      QuestionResult._(isSuccess: true, question: question);
+  QuestionResult._({
+    required this.isSuccess,
+    this.question,
+    this.errorMessage,
+    this.affectedQuizzes,
+  });
+
+  factory QuestionResult.success(Question? question, {int? affectedQuizzes}) =>
+      QuestionResult._(
+        isSuccess: true,
+        question: question,
+        affectedQuizzes: affectedQuizzes,
+      );
 
   factory QuestionResult.failure(String message) =>
       QuestionResult._(isSuccess: false, errorMessage: message);
@@ -66,7 +79,29 @@ class QuestionBankService {
         'Authorization': 'Bearer $token',
       };
 
+  /// Decodes a body that is *supposed* to be JSON. Returns null when it is
+  /// not - an HTML error page from a server missing the route, typically -
+  /// so the status code can still be reported instead of a parse failure.
+  dynamic _tryDecode(String body) {
+    if (body.isEmpty) return <String, dynamic>{};
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return null;
+    }
+  }
+
   String _messageFrom(dynamic decoded, int statusCode, String failureVerb) {
+    if (statusCode == 401) return 'Session expired. Please log in again.';
+
+    // A 404 here is not missing data - it is a server that does not have this
+    // route at all, which is what an out-of-date deployment looks like. The
+    // body is an HTML error page, so there is no message to read out of it.
+    if (statusCode == 404) {
+      return 'The server has no endpoint to $failureVerb - '
+          'it is likely running an older build than this app expects.';
+    }
+
     if (decoded is Map && decoded['error'] is Map && decoded['error']['message'] != null) {
       return decoded['error']['message'].toString();
     }
@@ -75,12 +110,16 @@ class QuestionBankService {
 
   QuestionResult _parseResponse(http.Response response, String failureVerb) {
     final dynamic decoded =
-        response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+        _tryDecode(response.body);
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       final raw = decoded is Map ? decoded['question'] : null;
       return QuestionResult.success(
         raw is Map<String, dynamic> ? Question.fromJson(raw) : null,
+        // Delete reports how many quiz pools lost a question. A quiz is a
+        // filter, so deleting one question can quietly shrink several.
+        affectedQuizzes:
+            decoded is Map ? (decoded['affectedQuizzes'] as num?)?.toInt() : null,
       );
     }
     return QuestionResult.failure(_messageFrom(decoded, response.statusCode, failureVerb));
@@ -95,7 +134,8 @@ class QuestionBankService {
   Future<QuestionResult> getQuestion(int questionId) =>
       _send('GET', '/questions/$questionId', null, 'load question');
 
-  /// The backend answers 409 while the quiz module is unshipped, so a failure
+  /// Succeeds now that the quiz module has shipped, reporting how many quiz
+  /// pools shrank. Still 409s when something genuinely blocks the delete, and
   /// here is expected rather than a bug - the caller shows the message as-is.
   Future<QuestionResult> deleteQuestion(int questionId) =>
       _send('DELETE', '/questions/$questionId', null, 'delete question');
@@ -158,6 +198,15 @@ class QuestionBankService {
     }
   }
 
+  /// Long JSON bodies get truncated by the console, so they are printed in
+  /// chunks - same helper ChapterService and QuizService use.
+  void _log(String message) {
+    const int chunk = 800;
+    for (int i = 0; i < message.length; i += chunk) {
+      print(message.substring(i, i + chunk > message.length ? message.length : i + chunk));
+    }
+  }
+
   Future<QuestionListResult> getQuestions({
     int? subjectId,
     int? topicId,
@@ -191,19 +240,38 @@ class QuestionBankService {
 
     final uri = Uri.parse('$baseUrl/questions').replace(queryParameters: query);
 
+    _log('----------------------------------');
+    _log('[QUESTIONS] GET $uri');
+
     try {
       final response = await http.get(uri, headers: _headers(adminToken)).timeout(_timeout);
-      final decoded =
-          response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+      final decoded = _tryDecode(response.body);
+
+      _log('[QUESTIONS] status: ${response.statusCode}');
 
       if (response.statusCode == 200) {
-        return QuestionListResult.success(
-          QuestionPage.fromJson(decoded, fallbackLimit: limit),
-        );
+        final page = QuestionPage.fromJson(decoded, fallbackLimit: limit);
+        final activeCount =
+            page.questions.where((q) => q.status == QuestionStatus.active).length;
+
+        // Active vs inactive is the number that matters: only active questions
+        // are ever served, so a topic can look full and still serve nothing.
+        _log('[QUESTIONS] ${page.total} total, ${page.questions.length} on this page '
+            '- $activeCount active, ${page.questions.length - activeCount} inactive');
+        for (final q in page.questions) {
+          final correct = q.options.where((o) => o.isCorrect).map((o) => o.optionText);
+          _log('   ${q.status == QuestionStatus.active ? '[on ]' : '[OFF]'} '
+              '[${q.id}] ${q.questionText}');
+          _log('         answer: ${correct.isEmpty ? '(none marked)' : correct.join(', ')}');
+        }
+        _log('----------------------------------');
+        return QuestionListResult.success(page);
       }
-      return QuestionListResult.failure(
-        _messageFrom(decoded, response.statusCode, 'load questions'),
-      );
+
+      final message = _messageFrom(decoded, response.statusCode, 'load questions');
+      _log('[QUESTIONS] failed: $message');
+      _log('----------------------------------');
+      return QuestionListResult.failure(message);
     } on http.ClientException {
       return QuestionListResult.failure('Network error. Please check your connection.');
     } on FormatException {

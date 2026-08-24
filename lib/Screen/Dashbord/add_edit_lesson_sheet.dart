@@ -9,8 +9,9 @@ import '../../services/lesson_services.dart';
 import '../../services/lesson_upload_service.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../models/quiz_model.dart';
-import '../../provider/question_bank_provider.dart';
 import '../../services/quiz_service.dart';
+import '../../services/sheet_question_sync_service.dart';
+import '../../widget/sheet_quiz_picker.dart';
 import 'lesson_subscription_sheet.dart';
 
 class _UploadTile extends StatelessWidget {
@@ -159,8 +160,8 @@ Future<bool?> showAddEditLessonSheet(
       String? initialNoteUrl,
       String? initialNotePublicId,
       String? initialNoteFileType,
-      String? initialContent, // legacy free-text reference, shown read-only
       int? initialQuizId,
+      String? initialQuizTitle,
       bool? initialIsFreePreview,
       LessonAccessType? initialAccessType,
       LessonStatus? initialStatus, // NEW
@@ -173,13 +174,8 @@ Future<bool?> showAddEditLessonSheet(
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) {
-      return MultiProvider(
-        providers: [
-          ChangeNotifierProvider(create: (_) => LessonUpdateProvider()),
-          // Subject/topic for the quiz picker. Its own instance, so the
-          // Question Bank screen's taxonomy state is untouched.
-          ChangeNotifierProvider(create: (_) => SubjectTopicProvider()),
-        ],
+      return ChangeNotifierProvider(
+        create: (_) => LessonUpdateProvider(),
         child: _AddEditLessonSheet(
           chapterId: chapterId,
           courseId: courseId, // NEW
@@ -194,8 +190,8 @@ Future<bool?> showAddEditLessonSheet(
           initialNoteUrl: initialNoteUrl,
           initialNotePublicId: initialNotePublicId,
           initialNoteFileType: initialNoteFileType,
-          initialContent: initialContent,
           initialQuizId: initialQuizId,
+          initialQuizTitle: initialQuizTitle,
           initialIsFreePreview: initialIsFreePreview,
           initialAccessType: initialAccessType,
           initialStatus: initialStatus, // NEW
@@ -224,8 +220,8 @@ class _AddEditLessonSheet extends StatefulWidget {
   final String? initialNoteUrl;
   final String? initialNotePublicId;
   final String? initialNoteFileType;
-  final String? initialContent;
   final int? initialQuizId;
+  final String? initialQuizTitle;
   final bool? initialIsFreePreview;
   final LessonAccessType? initialAccessType;
   final LessonStatus? initialStatus; // NEW
@@ -247,8 +243,8 @@ class _AddEditLessonSheet extends StatefulWidget {
     this.initialNoteUrl,
     this.initialNotePublicId,
     this.initialNoteFileType,
-    this.initialContent,
     this.initialQuizId,
+    this.initialQuizTitle,
     this.initialIsFreePreview,
     this.initialAccessType,
     this.initialStatus, // NEW
@@ -300,39 +296,35 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   String? _noteUploadError;
   bool _noteRemoved = false;
 
-  // ── Quiz link (only used when _type == LessonType.quiz) ──────────
+  // ── Quiz ─────────────────────────────────────────────────────────
+  // Three separate records, in this order:
+  //   question -> lives in the bank (subject + topic)
+  //   quiz     -> a filter that matches questions   POST /api/quizzes
+  //   lesson   -> what a student opens              PUT  /api/lessons/:id
+  // Skipping the third leaves a quiz no student can reach, which is why the
+  // save always links as well as creates.
   final _quizService = QuizService();
 
-  int? _selectedQuizId;
-  Quiz? _selectedQuiz; // carries the live question count for the summary chip
-  List<Quiz> _availableQuizzes = [];
+  final _syncService = SheetQuestionSyncService();
 
-  /// Filters that narrow the quiz dropdown. Subject and topic mirror the
-  /// Question Bank taxonomy; the exam tag is derived from the loaded quizzes
-  /// because no endpoint lists tags on their own.
-  int? _filterSubjectId;
-  int? _filterTopicId;
-  String? _filterExamTag;
+  /// What the picker currently has, read live from the spreadsheet. Null on an
+  /// edit that left the existing link alone, which is why [_linkedQuizId] is
+  /// tracked separately.
+  SheetQuizSelection? _quizDraft;
 
-  bool _isLoadingQuizzes = false;
-  bool _isLoadingSelectedQuiz = false;
-  String? _quizLoadError;
+  /// Progress line while the selected rows are pushed into the bank.
+  String? _syncStatus;
 
-  /// Set when Save is pressed on a quiz lesson with nothing selected - the
-  /// dropdown isn't a FormField, so it can't report through the validator.
+  /// The quiz already on this lesson. Kept when the admin doesn't re-pick.
+  int? _linkedQuizId;
+
+  bool _isCreatingQuiz = false;
   String? _quizValidationError;
 
   bool get _isQuiz => _type == LessonType.quiz;
 
-  /// True when an edit started on a quiz lesson - needed to know whether to
-  /// send an explicit null on the way out of quiz type.
   late final bool _startedAsQuiz;
 
-  /// publicIds of assets uploaded during THIS session that are not yet
-  /// saved onto a lesson. Anything left here when the sheet closes is an
-  /// orphan on Cloudinary, so it gets deleted. Initial values from edit
-  /// mode are deliberately NOT tracked - those belong to the saved lesson,
-  /// and removing them is the save's job (via the remove* flags).
   String? _freshVideoPublicId;
   String? _freshThumbnailPublicId;
   String? _freshNotePublicId;
@@ -377,48 +369,9 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     _notePublicId = widget.initialNotePublicId;
     _noteFileType = widget.initialNoteFileType;
 
-    _selectedQuizId = widget.initialQuizId;
+    _linkedQuizId = widget.initialQuizId;
     _startedAsQuiz = _isEditMode && widget.initialType == LessonType.quiz;
 
-    if (_isQuiz) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _initQuizPicker());
-    }
-  }
-
-  /// Loads the subject list, and - in edit mode - resolves the already-linked
-  /// quiz so its subject/topic/tag can pre-populate the filters and its title
-  /// can show in the summary chip.
-  Future<void> _initQuizPicker() async {
-    if (!mounted) return;
-    final taxonomy = context.read<SubjectTopicProvider>();
-    taxonomy.loadSubjects();
-
-    final linkedId = _selectedQuizId;
-    if (linkedId == null) return;
-
-    setState(() => _isLoadingSelectedQuiz = true);
-    final result = await _quizService.get(linkedId);
-
-    if (!mounted) return;
-    if (!result.isSuccess || result.quiz == null) {
-      setState(() {
-        _isLoadingSelectedQuiz = false;
-        _quizLoadError = result.errorMessage;
-      });
-      return;
-    }
-
-    final quiz = result.quiz!;
-    setState(() {
-      _isLoadingSelectedQuiz = false;
-      _selectedQuiz = quiz;
-      _filterSubjectId = quiz.subjectId;
-      _filterTopicId = quiz.topicId;
-      _filterExamTag = quiz.examTag;
-    });
-
-    await taxonomy.loadTopics(subjectId: quiz.subjectId);
-    await _loadQuizzes();
   }
 
   @override
@@ -659,159 +612,143 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     await _deleteFreshAsset(orphan, provider.deleteNoteAsset);
   }
 
-  // ── Quiz picker ──────────────────────────────────────────────────
-
-  /// Switching the primary type in or out of quiz. The media tiles and the
-  /// quiz picker are mutually exclusive, so this also spins up the picker
-  /// the first time quiz is chosen.
+  /// Switching the primary type. The media tiles are hidden on a quiz
+  /// lesson, so this only has to rebuild.
   void _onTypeChanged(LessonType type) {
     if (type == _type) return;
-    final wasQuiz = _isQuiz;
     setState(() {
       _type = type;
       _quizValidationError = null;
     });
-    if (!wasQuiz && type == LessonType.quiz) _initQuizPicker();
   }
 
-  Future<void> _onQuizSubjectChanged(int? subjectId) async {
-    if (subjectId == null || subjectId == _filterSubjectId) return;
-
-    final taxonomy = context.read<SubjectTopicProvider>();
+  void _onQuizDraftChanged(SheetQuizSelection? draft) {
     setState(() {
-      _filterSubjectId = subjectId;
-      _filterTopicId = null; // a topic only means something inside its subject
-      _filterExamTag = null;
-      _availableQuizzes = [];
+      _quizDraft = draft;
+      if (draft != null) _quizValidationError = null;
+    });
+  }
+
+  /// Carries the picked spreadsheet rows into the API, then builds the quiz
+  /// that serves them.
+  ///
+  /// Three writes, in an order the later ones depend on:
+  ///   1. the sheet's subject/topic names resolve to database ids
+  ///      (POST /api/subjects, POST /api/subjects/:id/topics when missing)
+  ///   2. each picked row becomes a question    POST /api/questions
+  ///   3. a quiz filters that subject + topic   POST /api/quizzes
+  /// The lesson then links the quiz, which is what makes it reachable to a
+  /// student. Returns null when any step failed, so the save aborts instead of
+  /// writing a quiz lesson that serves nothing.
+  Future<int?> _syncAndCreateQuiz(
+      SheetQuizSelection selection, String lessonTitle) async {
+    setState(() {
+      _isCreatingQuiz = true;
+      _syncStatus = 'Reading "${selection.tab}" and saving its questions...';
+      _quizValidationError = null;
     });
 
-    await taxonomy.loadTopics(subjectId: subjectId);
-  }
-
-  Future<void> _onQuizTopicChanged(int? topicId) async {
-    setState(() {
-      _filterTopicId = topicId;
-      _filterExamTag = null;
-    });
-    await _loadQuizzes();
-  }
-
-  Future<void> _onExamTagChanged(String? examTag) async {
-    setState(() => _filterExamTag = examTag);
-    await _loadQuizzes();
-  }
-
-  Future<void> _loadQuizzes() async {
-    if (_filterSubjectId == null || _filterTopicId == null) return;
-
-    setState(() {
-      _isLoadingQuizzes = true;
-      _quizLoadError = null;
-    });
-
-    final result = await _quizService.list(
-      subjectId: _filterSubjectId,
-      topicId: _filterTopicId,
-      examTag: _filterExamTag,
+    final sync = await _syncService.sync(
+      subjectName: selection.subject,
+      topicName: selection.topic,
+      rows: selection.questions,
     );
 
-    if (!mounted) return;
+    if (!mounted) return null;
+
+    if (!sync.isSuccess) {
+      setState(() {
+        _isCreatingQuiz = false;
+        _syncStatus = null;
+        _quizValidationError = sync.errorMessage;
+      });
+      return null;
+    }
+
+    // Every row was rejected, so the quiz would filter over nothing.
+    if (sync.total == 0) {
+      setState(() {
+        _isCreatingQuiz = false;
+        _syncStatus = null;
+        _quizValidationError = sync.skipped.isEmpty
+            ? 'No questions were saved, so this quiz would serve nothing.'
+            : 'None of the selected rows could be saved:\n'
+                '${sync.skipped.take(3).join('\n')}';
+      });
+      return null;
+    }
+
+    setState(() => _syncStatus =
+        '${sync.created} saved, ${sync.alreadyPresent} already there. '
+        'Creating the quiz...');
+
+    final result = await _quizService.create(Quiz(
+      id: 0, // server-assigned; toPayload() never sends it
+      title: lessonTitle.isEmpty ? selection.tab : lessonTitle,
+      subjectId: sync.subjectId!,
+      topicId: sync.topicId!,
+      questionCount: sync.total,
+    ));
+
+    if (!mounted) return null;
     setState(() {
-      _isLoadingQuizzes = false;
-      if (result.isSuccess) {
-        _availableQuizzes = result.quizzes ?? [];
-        // A selection that the new filters exclude has to go, or Save would
-        // send a quiz the admin can no longer see.
-        if (_selectedQuizId != null &&
-            !_availableQuizzes.any((q) => q.id == _selectedQuizId)) {
-          _selectedQuizId = null;
-          _selectedQuiz = null;
-        }
-      } else {
-        _quizLoadError = result.errorMessage;
+      _isCreatingQuiz = false;
+      _syncStatus = null;
+    });
+
+    if (result.isSuccess && result.quiz != null) {
+      if (sync.skipped.isNotEmpty) {
+        _showSkipped(sync.skipped);
       }
-    });
+      return result.quiz!.id;
+    }
+
+    setState(() => _quizValidationError =
+        result.errorMessage ?? 'Failed to create the quiz');
+    return null;
   }
 
-  Future<void> _onQuizSelected(int? quizId) async {
-    setState(() {
-      _selectedQuizId = quizId;
-      _quizValidationError = null;
-      _selectedQuiz = quizId == null
-          ? null
-          : _availableQuizzes.where((q) => q.id == quizId).firstOrNull;
-    });
-    if (quizId == null) return;
-
-    // Re-read the quiz on its own: the list row's pool count can be stale by
-    // the time an admin gets here, and that number drives the warning.
-    setState(() => _isLoadingSelectedQuiz = true);
-    final result = await _quizService.get(quizId);
-
-    if (!mounted) return;
-    setState(() {
-      _isLoadingSelectedQuiz = false;
-      if (result.isSuccess && result.quiz != null) _selectedQuiz = result.quiz;
-    });
-  }
-
-  /// Creates a quiz inline from the subject/topic/tag already chosen, then
-  /// selects it - so the admin never leaves the lesson sheet.
-  Future<void> _openNewQuizDialog() async {
-    final subjectId = _filterSubjectId;
-    final topicId = _filterTopicId;
-    if (subjectId == null || topicId == null) return;
-
-    final titleController = TextEditingController();
-    final countController = TextEditingController(text: '10');
-    final formKey = GlobalKey<FormState>();
-
-    final created = await showDialog<Quiz>(
-      context: context,
-      builder: (ctx) => _NewQuizDialog(
-        formKey: formKey,
-        titleController: titleController,
-        countController: countController,
-        examTag: _filterExamTag,
-        onSubmit: () async {
-          if (!formKey.currentState!.validate()) return null;
-          return _quizService.create(Quiz(
-            id: 0,
-            title: titleController.text.trim(),
-            subjectId: subjectId,
-            topicId: topicId,
-            examTag: _filterExamTag,
-            questionCount: int.tryParse(countController.text.trim()) ?? 10,
-          ));
-        },
+  /// Rows the API refused. The lesson still saved, so this is a notice rather
+  /// than an error - but a silently missing question is invisible.
+  void _showSkipped(List<String> skipped) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        backgroundColor: LmsColors.error,
+        content: Text(
+          '${skipped.length} sheet row${skipped.length == 1 ? '' : 's'} '
+          'could not be saved:\n${skipped.take(3).join('\n')}'
+          '${skipped.length > 3 ? '\n...and ${skipped.length - 3} more' : ''}',
+          style: const TextStyle(fontSize: 12.5),
+        ),
       ),
     );
-
-    titleController.dispose();
-    countController.dispose();
-
-    if (created == null || !mounted) return;
-
-    setState(() {
-      _availableQuizzes = [created, ..._availableQuizzes];
-      _quizValidationError = null;
-    });
-    await _onQuizSelected(created.id);
   }
 
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
     if (_isUploadingVideo || _isUploadingThumbnail || _isUploadingNote) return;
 
-    // A quiz lesson has to point at a quiz - the dropdown can't report this
-    // through the form validator, so it's checked here before any request.
-    if (_isQuiz && _selectedQuizId == null) {
-      setState(() => _quizValidationError = 'Pick a quiz for this lesson.');
-      return;
-    }
+    if (_isCreatingQuiz) return;
 
     final provider = context.read<LessonUpdateProvider>();
     final title = _titleController.text.trim();
+
+    // A quiz lesson has to point at a quiz. Either the picker built one now,
+    // or the lesson already carried one and the admin left it alone.
+    if (_isQuiz) {
+      if (_quizDraft == null && _linkedQuizId == null) {
+        setState(() => _quizValidationError =
+            'Pick a subject and topic with at least one active question.');
+        return;
+      }
+      final draft = _quizDraft;
+      if (draft != null) {
+        final quizId = await _syncAndCreateQuiz(draft, title);
+        if (quizId == null) return; // message already on screen
+        _linkedQuizId = quizId;
+      }
+    }
     final description = _descriptionController.text.trim();
 
     final bool removeDescription =
@@ -844,7 +781,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       accessType: _accessType,
       status: _status,
       planIds: _planIds.toList(),
-      quizId: _isQuiz ? _selectedQuizId : null,
+      quizId: _isQuiz ? _linkedQuizId : null,
       removeQuiz: removeQuiz,
     )
         : await provider.createLesson(
@@ -864,7 +801,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       accessType: _accessType,
       status: _status,
       planIds: _planIds.toList(),
-      quizId: _isQuiz ? _selectedQuizId : null,
+      quizId: _isQuiz ? _linkedQuizId : null,
     );
 
     if (!mounted) return;
@@ -908,157 +845,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
         return Icons.picture_as_pdf_outlined;
     }
   }
-
-  // ── Quiz picker UI ───────────────────────────────────────────────
-
-  Widget _quizPicker() {
-    final taxonomy = context.watch<SubjectTopicProvider>();
-    final examTags = examTagsOf(_availableQuizzes);
-    final canPickTopic = _filterSubjectId != null;
-    final canPickQuiz = _filterTopicId != null;
-    final legacyRef = widget.initialContent?.trim() ?? '';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const _FieldLabel('Quiz'),
-        const SizedBox(height: 6),
-        const Text(
-          'Narrow by subject and topic, then pick the quiz this lesson runs.',
-          style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
-        ),
-        const SizedBox(height: 10),
-
-        // A lesson saved before quizzes existed still carries its old
-        // free-text reference. Showing it is the only clue an admin has as
-        // to which quiz to pick now.
-        if (legacyRef.isNotEmpty && _selectedQuizId == null) ...[
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: LmsColors.bg,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: LmsColors.border),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.history_rounded, size: 15, color: LmsColors.textGrey),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Previously referenced "$legacyRef". Pick a quiz to replace it.',
-                    style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-
-        DropdownButtonFormField<int>(
-          initialValue: _filterSubjectId,
-          isExpanded: true,
-          decoration: _inputDecoration('Subject', icon: Icons.folder_outlined),
-          items: taxonomy.subjects
-              .map((s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
-              .toList(),
-          onChanged: _onQuizSubjectChanged,
-        ),
-        const SizedBox(height: 10),
-
-        DropdownButtonFormField<int>(
-          initialValue: _filterTopicId,
-          isExpanded: true,
-          decoration: _inputDecoration(
-            canPickTopic ? 'Topic' : 'Topic (pick a subject first)',
-            icon: Icons.label_outline_rounded,
-          ),
-          items: taxonomy.topics
-              .map((t) => DropdownMenuItem(value: t.id, child: Text(t.name)))
-              .toList(),
-          onChanged: canPickTopic ? _onQuizTopicChanged : null,
-        ),
-        const SizedBox(height: 10),
-
-        // Exam tags are derived from the quizzes already loaded - there is no
-        // endpoint that lists them.
-        if (examTags.isNotEmpty) ...[
-          DropdownButtonFormField<String?>(
-            initialValue: _filterExamTag,
-            isExpanded: true,
-            decoration: _inputDecoration('Exam tag (optional)', icon: Icons.sell_outlined),
-            items: [
-              const DropdownMenuItem<String?>(value: null, child: Text('Any exam tag')),
-              ...examTags.map((t) => DropdownMenuItem<String?>(value: t, child: Text(t))),
-            ],
-            onChanged: _onExamTagChanged,
-          ),
-          const SizedBox(height: 10),
-        ],
-
-        if (_isLoadingQuizzes)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 14),
-            child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2.2, color: LmsColors.primary),
-              ),
-            ),
-          )
-        else
-          DropdownButtonFormField<int>(
-            initialValue: _selectedQuizId,
-            isExpanded: true,
-            decoration: _inputDecoration(
-              !canPickQuiz
-                  ? 'Quiz (pick a topic first)'
-                  : _availableQuizzes.isEmpty
-                      ? 'No quizzes match these filters'
-                      : 'Select a quiz',
-              icon: Icons.quiz_outlined,
-            ),
-            items: _availableQuizzes
-                .map((q) => DropdownMenuItem(value: q.id, child: Text(q.title)))
-                .toList(),
-            onChanged: canPickQuiz ? _onQuizSelected : null,
-          ),
-
-        if (_quizLoadError != null) ...[
-          const SizedBox(height: 8),
-          Text(_quizLoadError!,
-              style: const TextStyle(color: LmsColors.error, fontSize: 12.5)),
-        ],
-        if (_quizValidationError != null) ...[
-          const SizedBox(height: 8),
-          Text(_quizValidationError!,
-              style: const TextStyle(color: LmsColors.error, fontSize: 12.5)),
-        ],
-
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: canPickQuiz ? _openNewQuizDialog : null,
-            icon: const Icon(Icons.add_rounded, size: 16),
-            label: const Text('New Quiz',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
-          ),
-        ),
-
-        if (_selectedQuiz != null || _isLoadingSelectedQuiz) ...[
-          const SizedBox(height: 4),
-          _QuizSummaryChip(
-            quiz: _selectedQuiz,
-            isLoading: _isLoadingSelectedQuiz,
-          ),
-        ],
-      ],
-    );
-  }
-
   Widget _planPicker() {
     if (widget.courseId == null) {
       return const Text(
@@ -1237,9 +1023,38 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   }).toList(),
                 ),
 
-                // Media and the quiz link are mutually exclusive - on a quiz
-                // lesson these come out of the tree rather than being
-                // disabled, so there's nothing to half-fill.
+                if (_isQuiz) ...[
+                  const SizedBox(height: 18),
+                  SheetQuizPicker(
+                    onChanged: _onQuizDraftChanged,
+                    validationError: _quizValidationError,
+                  ),
+                  if (_syncStatus != null) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _syncStatus!,
+                            style: const TextStyle(
+                                fontSize: 12, color: LmsColors.textGrey),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                ],
+
+                // Media and the quiz picker are mutually exclusive - on a quiz
+                // lesson the upload tiles come out of the tree rather than
+                // being disabled, so there's nothing to half-fill.
                 if (!_isQuiz) ...[
                 const _FieldLabel('Thumbnail Image (optional)'),
                 const SizedBox(height: 6),
@@ -1320,11 +1135,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 const SizedBox(height: 16),
                 ],
 
-                if (_isQuiz) ...[
-                  _quizPicker(),
-                  const SizedBox(height: 16),
-                ],
-
                 const _FieldLabel('Access Type'),
                 const SizedBox(height: 8),
                 Row(
@@ -1372,6 +1182,8 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: LmsColors.border),
                   ),
+                  child: Material(
+                  color: Colors.transparent,
                   child: SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: _isFreePreview,
@@ -1385,6 +1197,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                       style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
                     ),
                   ),
+                ),
                 ),
 
                 if (provider.errorMessage != null) ...[
@@ -1473,208 +1286,4 @@ Future<bool> confirmAndDeleteLesson(
   }
 
   return success;
-}
-
-
-/// Summary of the linked quiz: title plus the live pool count, so an admin
-/// can see a thin question pool before students do.
-class _QuizSummaryChip extends StatelessWidget {
-  final Quiz? quiz;
-  final bool isLoading;
-
-  const _QuizSummaryChip({required this.quiz, required this.isLoading});
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2, color: LmsColors.primary),
-            ),
-            SizedBox(width: 8),
-            Text('Loading quiz...',
-                style: TextStyle(fontSize: 12, color: LmsColors.textGrey)),
-          ],
-        ),
-      );
-    }
-
-    final q = quiz;
-    if (q == null) return const SizedBox.shrink();
-
-    final pool = q.activeQuestionPool;
-    final underfilled = q.isUnderfilled;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: underfilled ? LmsColors.errorBg : LmsColors.primarySoft,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: underfilled ? LmsColors.errorBorder : LmsColors.primary.withValues(alpha: 0.3),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            underfilled ? Icons.warning_amber_rounded : Icons.quiz_outlined,
-            size: 16,
-            color: underfilled ? LmsColors.error : LmsColors.primary,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  q.title,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: underfilled ? LmsColors.error : LmsColors.primary,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  pool == null
-                      ? '${q.questionCount} questions per attempt'
-                      : underfilled
-                          ? 'Only $pool active question${pool == 1 ? '' : 's'} available '
-                              'for ${q.questionCount} per attempt'
-                          : '${q.questionCount} of $pool active questions per attempt',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: underfilled ? LmsColors.error : LmsColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Inline quiz creation. Subject, topic and exam tag are inherited from what
-/// the lesson sheet already has selected, so this only asks for a title and a
-/// question count.
-class _NewQuizDialog extends StatefulWidget {
-  final GlobalKey<FormState> formKey;
-  final TextEditingController titleController;
-  final TextEditingController countController;
-  final String? examTag;
-  final Future<QuizResult?> Function() onSubmit;
-
-  const _NewQuizDialog({
-    required this.formKey,
-    required this.titleController,
-    required this.countController,
-    required this.examTag,
-    required this.onSubmit,
-  });
-
-  @override
-  State<_NewQuizDialog> createState() => _NewQuizDialogState();
-}
-
-class _NewQuizDialogState extends State<_NewQuizDialog> {
-  bool _isSaving = false;
-  String? _errorMessage;
-
-  Future<void> _submit() async {
-    setState(() {
-      _isSaving = true;
-      _errorMessage = null;
-    });
-
-    final result = await widget.onSubmit();
-
-    if (!mounted) return;
-    if (result == null) {
-      setState(() => _isSaving = false); // validation failed, message is inline
-      return;
-    }
-    if (result.isSuccess && result.quiz != null) {
-      Navigator.pop(context, result.quiz);
-      return;
-    }
-    setState(() {
-      _isSaving = false;
-      _errorMessage = result.errorMessage ?? 'Failed to create quiz';
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      title: const Text('New Quiz', style: TextStyle(fontWeight: FontWeight.w800)),
-      content: Form(
-        key: widget.formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextFormField(
-              controller: widget.titleController,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Quiz title'),
-              validator: (value) =>
-                  (value == null || value.trim().isEmpty) ? 'Title is required' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: widget.countController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Questions per attempt'),
-              validator: (value) {
-                final n = int.tryParse(value?.trim() ?? '');
-                if (n == null || n < 1) return 'Enter a whole number of 1 or more';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            Text(
-              widget.examTag == null
-                  ? 'Uses the subject and topic selected above.'
-                  : 'Uses the subject, topic and "${widget.examTag}" tag selected above.',
-              style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
-            ),
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 10),
-              Text(_errorMessage!,
-                  style: const TextStyle(color: LmsColors.error, fontSize: 12.5)),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _isSaving ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _isSaving ? null : _submit,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: LmsColors.primary,
-            foregroundColor: Colors.white,
-          ),
-          child: _isSaving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                )
-              : const Text('Create'),
-        ),
-      ],
-    );
-  }
 }

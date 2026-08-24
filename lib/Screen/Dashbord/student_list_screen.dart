@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+
+import 'student_detail_screen.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/theam/theam_dart.dart';
 import '../../models/admin_student_model.dart';
 import '../../provider/admin_student_provider.dart';
+import '../../widget/shimmer_loading.dart';
 
 class AdminStudentListScreen extends StatefulWidget {
   const AdminStudentListScreen({super.key});
@@ -28,7 +31,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
         if (provider.isLoading && provider.students.isEmpty) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 60),
-            child: Center(child: CircularProgressIndicator()),
+            child: ShimmerListSkeleton(rowCount: 5),
           );
         }
 
@@ -164,7 +167,12 @@ class _StudentRow extends StatelessWidget {
 
         if (isWide) {
           return InkWell(
-            onTap: () {}, // hook up a student-detail view here later if needed
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => StudentDetailScreen(student: student),
+              ),
+            ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(

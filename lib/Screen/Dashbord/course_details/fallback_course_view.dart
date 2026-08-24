@@ -27,14 +27,14 @@ class FallbackCourseView extends StatefulWidget {
   final String reason;
   final int courseId;
   final Future<void> Function() onRetry;
-  final VoidCallback onAddExamType;
+  final VoidCallback? onAddExamType;
 
   const FallbackCourseView({
     required this.data,
     required this.reason,
     required this.courseId,
     required this.onRetry,
-    required this.onAddExamType,
+    this.onAddExamType,
   });
 
   @override
@@ -111,12 +111,15 @@ class FallbackCourseViewState extends State<FallbackCourseView> {
                   ),
                 ),
               ),
-              TextButton.icon(
-                onPressed: widget.onAddExamType,
-                icon: const Icon(Icons.add_rounded, size: 16),
-                label: const Text('Add Exam Type',
-                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
-              ),
+              // Absent, not disabled - a read-only view offers nothing to
+              // click that would then refuse.
+              if (widget.onAddExamType != null)
+                TextButton.icon(
+                  onPressed: widget.onAddExamType,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('Add Exam Type',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                ),
             ],
           ),
           const SizedBox(height: 4),

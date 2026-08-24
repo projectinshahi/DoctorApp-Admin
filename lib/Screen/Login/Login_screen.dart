@@ -113,7 +113,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      "SAS LMS admin",
+                      "dr.skm's academy",
                       style: TextStyle(
                         fontSize: brandFontSize,
                         fontWeight: FontWeight.w800,

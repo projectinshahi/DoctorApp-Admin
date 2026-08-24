@@ -6,6 +6,7 @@ import '../../core/theam/theam_dart.dart';
 import '../../models/panal_model.dart';
 import '../../provider/admin_plan_provider.dart';
 import 'add_edit_plan_sheet.dart';
+import '../../widget/shimmer_loading.dart';
 
 class PlanManagementScreen extends StatefulWidget {
   final int courseId;
@@ -100,7 +101,10 @@ class _PlanManagementScreenState extends State<PlanManagementScreen> {
       body: Consumer<AdminPlanProvider>(
         builder: (context, provider, child) {
           if (provider.isLoading) {
-            return const Center(child: CircularProgressIndicator());
+            return const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: ShimmerListSkeleton(rowCount: 4),
+            );
           }
 
           if (provider.errorMessage != null) {

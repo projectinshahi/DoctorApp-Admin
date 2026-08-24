@@ -41,6 +41,20 @@ class QuizListResult {
 ///
 /// Errors are read from the nested { "error": { "message": "..." } } shape
 /// every other service in this app already uses.
+class QuizPreviewResult {
+  final bool isSuccess;
+  final QuizPreview? preview;
+  final String? errorMessage;
+
+  QuizPreviewResult._({required this.isSuccess, this.preview, this.errorMessage});
+
+  factory QuizPreviewResult.success(QuizPreview preview) =>
+      QuizPreviewResult._(isSuccess: true, preview: preview);
+
+  factory QuizPreviewResult.failure(String message) =>
+      QuizPreviewResult._(isSuccess: false, errorMessage: message);
+}
+
 class QuizService {
   final String baseUrl;
 
@@ -58,7 +72,38 @@ class QuizService {
         'Authorization': 'Bearer $token',
       };
 
+  /// Long JSON bodies get truncated by the console, so they are printed in
+  /// chunks - same helper ChapterService uses.
+  void _log(String message) {
+    const int chunk = 800;
+    for (int i = 0; i < message.length; i += chunk) {
+      print(message.substring(i, i + chunk > message.length ? message.length : i + chunk));
+    }
+  }
+
+  /// Decodes a body that is *supposed* to be JSON. Returns null when it is
+  /// not - an HTML error page from a server missing the route, typically -
+  /// so the status code can still be reported instead of a parse failure.
+  dynamic _tryDecode(String body) {
+    if (body.isEmpty) return <String, dynamic>{};
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return null;
+    }
+  }
+
   String _messageFrom(dynamic decoded, int statusCode, String failureVerb) {
+    if (statusCode == 401) return 'Session expired. Please log in again.';
+
+    // A 404 here is not missing data - it is a server that does not have this
+    // route at all, which is what an out-of-date deployment looks like. The
+    // body is an HTML error page, so there is no message to read out of it.
+    if (statusCode == 404) {
+      return 'The server has no endpoint to $failureVerb - '
+          'it is likely running an older build than this app expects.';
+    }
+
     if (decoded is Map && decoded['error'] is Map && decoded['error']['message'] != null) {
       return decoded['error']['message'].toString();
     }
@@ -88,14 +133,34 @@ class QuizService {
     final uri = Uri.parse('$baseUrl/quizzes')
         .replace(queryParameters: query.isEmpty ? null : query);
 
+    _log('----------------------------------');
+    _log('[QUIZZES] GET $uri');
+
     try {
       final response = await http.get(uri, headers: _headers(adminToken)).timeout(_timeout);
-      final decoded =
-          response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+      final decoded = _tryDecode(response.body);
+
+      _log('[QUIZZES] status: ${response.statusCode}');
+      _log('[QUIZZES] body:');
+      _log(response.body.isEmpty ? '(empty body)' : response.body);
 
       if (response.statusCode == 200) {
-        return QuizListResult.success(parseQuizzes(decoded));
+        final quizzes = parseQuizzes(decoded);
+        // An empty list here is data, not a fault: it means no quiz has been
+        // created for these filters yet. Saying so stops it reading as a bug.
+        _log(quizzes.isEmpty
+            ? '[QUIZZES] 0 quizzes match - none created for this subject/topic yet'
+            : '[QUIZZES] parsed ${quizzes.length} quiz(zes)');
+        for (final q in quizzes) {
+          _log('   - [${q.id}] "${q.title}" subject=${q.subjectId} topic=${q.topicId} '
+              'tag=${q.examTag ?? '-'} status=${q.status} '
+              'linkedTo=${q.linkedLessonTitle ?? '-'}');
+        }
+        _log('----------------------------------');
+        return QuizListResult.success(quizzes);
       }
+      _log('[QUIZZES] failed with status ${response.statusCode}');
+      _log('----------------------------------');
       return QuizListResult.failure(
         _messageFrom(decoded, response.statusCode, 'load quizzes'),
       );
@@ -153,12 +218,48 @@ class QuizService {
 
   QuizResult _parse(http.Response response, String failureVerb) {
     final dynamic decoded =
-        response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+        _tryDecode(response.body);
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       final raw = decoded is Map ? decoded['quiz'] : null;
       return QuizResult.success(raw is Map<String, dynamic> ? Quiz.fromJson(raw) : null);
     }
     return QuizResult.failure(_messageFrom(decoded, response.statusCode, failureVerb));
+  }
+
+  /// The admin preview: the exact questions a student would be served, but
+  /// WITH `isCorrect` and `explanation`. Admin-only - never call this from a
+  /// student context, it is the answer key.
+  ///
+  /// GET /api/quizzes/:id/preview
+  Future<QuizPreviewResult> previewQuiz(int quizId) async {
+    final adminToken = await _getToken();
+    if (adminToken == null) {
+      return QuizPreviewResult.failure('Session expired. Please log in again.');
+    }
+
+    final uri = Uri.parse('$baseUrl/quizzes/$quizId/preview');
+
+    try {
+      // Longer than the other calls: this one assembles every question.
+      final response = await http
+          .get(uri, headers: _headers(adminToken))
+          .timeout(const Duration(seconds: 20));
+
+      final decoded = _tryDecode(response.body);
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        return QuizPreviewResult.success(QuizPreview.fromJson(decoded));
+      }
+      return QuizPreviewResult.failure(
+        _messageFrom(decoded, response.statusCode, 'load the quiz preview'),
+      );
+    } on http.ClientException {
+      return QuizPreviewResult.failure('Network error. Please check your connection.');
+    } on FormatException {
+      return QuizPreviewResult.failure('Unexpected response from server.');
+    } catch (e) {
+      return QuizPreviewResult.failure('Something went wrong: $e');
+    }
   }
 }

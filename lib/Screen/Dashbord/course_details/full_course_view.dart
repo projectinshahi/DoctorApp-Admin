@@ -22,8 +22,12 @@ class PremiumHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isPremium = course.accessType.toLowerCase() == 'premium';
-    final Color badgeColor = isPremium ? LmsColors.primary : const Color(0xFF4C6FFF);
-    final IconData badgeIcon = isPremium ? Icons.workspace_premium_rounded : Icons.lock_open_rounded;
+    final Color badgeColor = isPremium
+        ? LmsColors.primary
+        : const Color(0xFF4C6FFF);
+    final IconData badgeIcon = isPremium
+        ? Icons.workspace_premium_rounded
+        : Icons.lock_open_rounded;
     final String badgeLabel = isPremium ? 'PREMIUM COURSE' : 'FREE COURSE';
 
     return SliverAppBar(
@@ -38,7 +42,11 @@ class PremiumHeader extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF1B1D22), LmsColors.textDark, Color(0xFF0D0E11)],
+              colors: [
+                Color(0xFF1B1D22),
+                LmsColors.textDark,
+                Color(0xFF0D0E11),
+              ],
             ),
           ),
           child: Stack(
@@ -63,7 +71,11 @@ class PremiumHeader extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Icon(badgeIcon, color: badgeColor.withOpacity(0.9), size: 18),
+                        Icon(
+                          badgeIcon,
+                          color: badgeColor.withOpacity(0.9),
+                          size: 18,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           badgeLabel,
@@ -142,7 +154,8 @@ class StatChipsRow extends StatelessWidget {
         ),
         PillChip(
           icon: Icons.menu_book_rounded,
-          label: '${course.chapterCount} syllabus items · ${course.lessonCount} lessons',
+          label:
+              '${course.chapterCount} syllabus items · ${course.lessonCount} lessons',
           color: LmsColors.textDark,
         ),
       ],
@@ -152,6 +165,7 @@ class StatChipsRow extends StatelessWidget {
 
 class CourseTypeCard extends StatelessWidget {
   final CourseType courseType;
+
   /// Only used for the breadcrumb - the card itself is about the exam type.
   final String courseTitle;
   final Map<int, String> planTitles;
@@ -165,6 +179,11 @@ class CourseTypeCard extends StatelessWidget {
   final void Function(Chapter chapter, Lesson lesson) onEditLesson;
   final void Function(Chapter chapter, Lesson lesson) onDeleteLesson;
   final void Function(Chapter chapter, Lesson lesson)? onEditLessonSubscription;
+
+  /// Listing and reading only - every add / edit / delete affordance comes out
+  /// of the tree rather than being disabled, so there is nothing to click that
+  /// then refuses.
+  final bool readOnly;
 
   const CourseTypeCard({
     required this.courseType,
@@ -180,11 +199,15 @@ class CourseTypeCard extends StatelessWidget {
     required this.onEditLesson,
     required this.onDeleteLesson,
     this.onEditLessonSubscription,
+    this.readOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final lessonCount = courseType.chapters.fold<int>(0, (sum, ch) => sum + ch.lessons.length);
+    final lessonCount = courseType.chapters.fold<int>(
+      0,
+      (sum, ch) => sum + ch.lessons.length,
+    );
     final isPremium = courseType.accessType.toLowerCase() == 'premium';
 
     return Container(
@@ -193,7 +216,13 @@ class CourseTypeCard extends StatelessWidget {
         color: LmsColors.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: LmsColors.border),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 18, offset: const Offset(0, 6))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -204,8 +233,15 @@ class CourseTypeCard extends StatelessWidget {
               children: [
                 Container(
                   padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: LmsColors.primarySoft, borderRadius: BorderRadius.circular(12)),
-                  child: const Icon(Icons.assignment_outlined, color: LmsColors.primary, size: 20),
+                  decoration: BoxDecoration(
+                    color: LmsColors.primarySoft,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.assignment_outlined,
+                    color: LmsColors.primary,
+                    size: 20,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -217,44 +253,78 @@ class CourseTypeCard extends StatelessWidget {
                           Flexible(
                             child: Text(
                               courseType.title,
-                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5, color: LmsColors.textDark),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15.5,
+                                color: LmsColors.textDark,
+                              ),
                             ),
                           ),
                           if (isPremium) ...[
                             const SizedBox(width: 6),
-                            const Icon(Icons.workspace_premium_rounded, size: 14, color: LmsColors.primary),
+                            const Icon(
+                              Icons.workspace_premium_rounded,
+                              size: 14,
+                              color: LmsColors.primary,
+                            ),
                           ],
                         ],
                       ),
                       const SizedBox(height: 3),
                       Text(
                         '${courseType.chapters.length} chapters · $lessonCount lessons',
-                        style: const TextStyle(fontSize: 12, color: LmsColors.textGrey),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: LmsColors.textGrey,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                PillChip(icon: Icons.circle, iconSize: 8, label: courseType.status, color: statusColor),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, color: LmsColors.textGrey, size: 20),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  onSelected: (value) {
-                    if (value == 'edit') onEdit();
-                    if (value == 'delete') onDelete();
-                  },
-                  itemBuilder: (ctx) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Edit subject')),
-                    PopupMenuItem(value: 'delete', child: Text('Delete subject')),
-                  ],
+                PillChip(
+                  icon: Icons.circle,
+                  iconSize: 8,
+                  label: courseType.status,
+                  color: statusColor,
                 ),
+                if (!readOnly)
+                  PopupMenuButton<String>(
+                    icon: const Icon(
+                      Icons.more_vert_rounded,
+                      color: LmsColors.textGrey,
+                      size: 20,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    onSelected: (value) {
+                      if (value == 'edit') onEdit();
+                      if (value == 'delete') onDelete();
+                    },
+                    itemBuilder: (ctx) => const [
+                      PopupMenuItem(value: 'edit', child: Text('Edit subject')),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete subject'),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
 
-          if (courseType.description != null && courseType.description!.isNotEmpty)
+          if (courseType.description != null &&
+              courseType.description!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Text(courseType.description!, style: const TextStyle(fontSize: 12.5, color: LmsColors.textGrey, height: 1.4)),
+              child: Text(
+                courseType.description!,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  color: LmsColors.textGrey,
+                  height: 1.4,
+                ),
+              ),
             ),
 
           const Divider(height: 1, color: LmsColors.border),
@@ -275,34 +345,45 @@ class CourseTypeCard extends StatelessWidget {
                 planTitles: planTitles,
                 chapter: chapter,
                 chapterNumber: index + 1,
-                onEdit: () => onEditChapter(chapter),
-                onDelete: () => onDeleteChapter(chapter),
-                onAddLesson: () => onAddLesson(chapter),
-                onEditLesson: (lesson) => onEditLesson(chapter, lesson),
-                onDeleteLesson: (lesson) => onDeleteLesson(chapter, lesson),
-                onEditLessonSubscription: onEditLessonSubscription == null
+                onEdit: readOnly ? null : () => onEditChapter(chapter),
+                onDelete: readOnly ? null : () => onDeleteChapter(chapter),
+                onAddLesson: readOnly ? null : () => onAddLesson(chapter),
+                onEditLesson: readOnly
+                    ? null
+                    : (lesson) => onEditLesson(chapter, lesson),
+                onDeleteLesson: readOnly
+                    ? null
+                    : (lesson) => onDeleteLesson(chapter, lesson),
+                onEditLessonSubscription:
+                    readOnly || onEditLessonSubscription == null
                     ? null
                     : (lesson) => onEditLessonSubscription!(chapter, lesson),
               );
             }),
 
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: onAddChapter,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: LmsColors.primary,
-                  side: const BorderSide(color: LmsColors.primary),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          if (!readOnly)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onAddChapter,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: LmsColors.primary,
+                    side: const BorderSide(color: LmsColors.primary),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text(
+                    'Add Syllabus',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
                 ),
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('Add Syllabus', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -345,145 +426,285 @@ class ChapterTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool showChapterActions = onEdit != null || onDelete != null;
-    final bool showLessonActions = onEditLesson != null || onDeleteLesson != null;
+    final bool showLessonActions =
+        onEditLesson != null || onDeleteLesson != null;
 
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-        childrenPadding: const EdgeInsets.only(bottom: 8),
-        leading: Container(
-          width: 30,
-          height: 30,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: LmsColors.textDark.withOpacity(0.06), borderRadius: BorderRadius.circular(9)),
-          child: Text(
-            '$chapterNumber',
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: LmsColors.textDark),
+    // The card this sits in paints its own background, which would cover the
+    // header tile's ink splashes - so it gets its own transparent Material to
+    // splash onto. Without it Flutter asserts on every frame.
+    return Material(
+      color: Colors.transparent,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+          childrenPadding: const EdgeInsets.only(bottom: 8),
+          leading: Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: LmsColors.textDark.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              '$chapterNumber',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: LmsColors.textDark,
+              ),
+            ),
+          ),
+          title: Text(
+            chapter.title,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+          subtitle: Text(
+            '${chapter.lessons.length} lessons',
+            style: const TextStyle(fontSize: 12, color: LmsColors.textGrey),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Moved up here from the foot of the list: adding a lesson is a
+              // chapter-level action, and at the bottom it drifted further down
+              // the page with every lesson added.
+              if (onAddLesson != null)
+                TextButton(
+                  onPressed: onAddLesson,
+                  style: TextButton.styleFrom(
+                    foregroundColor: LmsColors.primary,
+                    // The header row is tight, so the button carries no padding
+                    // it doesn't need and no tap box beyond its own text.
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 34),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text(
+                    'Add Lesson',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              showChapterActions
+                  ? PopupMenuButton<String>(
+                      icon: const Icon(
+                        Icons.more_vert_rounded,
+                        size: 18,
+                        color: LmsColors.textGrey,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      onSelected: (value) {
+                        if (value == 'edit') onEdit?.call();
+                        if (value == 'delete') onDelete?.call();
+                      },
+                      itemBuilder: (ctx) => const [
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Rename syllabus'),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete syllabus'),
+                        ),
+                      ],
+                    )
+                  : const Icon(
+                      Icons.expand_more_rounded,
+                      color: LmsColors.textGrey,
+                    ),
+            ],
+          ),
+          children: [
+            if (chapter.lessons.isEmpty)
+              const EmptyRow(text: 'No lessons added yet.')
+            else
+              ...List.generate(chapter.lessons.length, (index) {
+                return _LessonTimelineRow(
+                  lesson: chapter.lessons[index],
+                  index: index,
+                  isFirst: index == 0,
+                  isLast: index == chapter.lessons.length - 1,
+                  planTitles: planTitles,
+                  onEdit: onEditLesson == null
+                      ? null
+                      : () => onEditLesson!(chapter.lessons[index]),
+                  onDelete: onDeleteLesson == null
+                      ? null
+                      : () => onDeleteLesson!(chapter.lessons[index]),
+                  onEditSubscription: onEditLessonSubscription == null
+                      ? null
+                      : () => onEditLessonSubscription!(chapter.lessons[index]),
+                );
+              }),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One lesson on the chapter's timeline.
+///
+/// Not a card. Cards inside an already-carded chapter stack borders three deep
+/// and the eye stops reading it as a sequence. A rail with a node per lesson
+/// says "these are in order" without adding another box.
+class _LessonTimelineRow extends StatelessWidget {
+  final Lesson lesson;
+  final int index;
+  final bool isFirst;
+  final bool isLast;
+  final Map<int, String> planTitles;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+  final VoidCallback? onEditSubscription;
+
+  const _LessonTimelineRow({
+    required this.lesson,
+    required this.index,
+    required this.isFirst,
+    required this.isLast,
+    this.planTitles = const {},
+    this.onEdit,
+    this.onDelete,
+    this.onEditSubscription,
+  });
+
+  /// Where the node sits from the top of the row - lines up with the middle of
+  /// the title line, not the middle of the row, which drifts as badges wrap.
+  static const double _nodeTop = 15;
+  static const double _nodeSize = 11;
+  static const double _railWidth = 34;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = LessonTypeUI.of(LessonTypeX.fromApiValue(lesson.type));
+    final showActions = onEdit != null || onDelete != null;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => LessonDetailScreen(lessonId: lesson.id),
           ),
         ),
-        title: Text(chapter.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-        subtitle: Text('${chapter.lessons.length} lessons', style: const TextStyle(fontSize: 12, color: LmsColors.textGrey)),
-        trailing: showChapterActions
-            ? PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert_rounded, size: 18, color: LmsColors.textGrey),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          onSelected: (value) {
-            if (value == 'edit') onEdit?.call();
-            if (value == 'delete') onDelete?.call();
-          },
-          itemBuilder: (ctx) => const [
-            PopupMenuItem(value: 'edit', child: Text('Rename syllabus')),
-            PopupMenuItem(value: 'delete', child: Text('Delete syllabus')),
-          ],
-        )
-            : const Icon(Icons.expand_more_rounded, color: LmsColors.textGrey),
-        children: [
-          if (chapter.lessons.isEmpty)
-            const EmptyRow(text: 'No lessons added yet.')
-          else
-            ...List.generate(chapter.lessons.length, (index) {
-              final lesson = chapter.lessons[index];
-              final ui = LessonTypeUI.of(LessonTypeX.fromApiValue(lesson.type));
-
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                decoration: BoxDecoration(
-                  color: LmsColors.bg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border(left: BorderSide(color: ui.color, width: 3)),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: _railWidth,
+                child: Stack(
+                  alignment: Alignment.topCenter,
+                  children: [
+                    // The rail, clipped at the ends so it doesn't dangle past
+                    // the first and last node.
+                    Positioned(
+                      top: isFirst ? _nodeTop : 0,
+                      bottom: isLast ? null : 0,
+                      height: isLast ? _nodeTop : null,
+                      child: Container(width: 2, color: LmsColors.border),
+                    ),
+                    Positioned(
+                      top: _nodeTop - _nodeSize / 2,
+                      child: Container(
+                        width: _nodeSize,
+                        height: _nodeSize,
+                        decoration: BoxDecoration(
+                          color: ui.color,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2.5),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => LessonDetailScreen(lessonId: lesson.id)));
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      child: Row(
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 6, top: 6, bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Container(
-                            width: 26,
-                            height: 26,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(color: ui.color.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-                            child: Text(
-                              letterLabel(index),
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: ui.color),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(lesson.title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
-                                const SizedBox(height: 5),
-                                LessonBadgeRow(
-                                  type: lesson.type,
-                                  status: lesson.status,
-                                  accessType: lesson.accessType,
-                                  isFreePreview: lesson.isFreePreview,
-                                  planLabels: [
-                                    for (final id in lesson.planIds)
-                                      planTitles[id] ?? 'Plan #$id',
-                                  ],
-                                  hasVideo: lesson.hasVideo,
-                                  compact: true,
-                                ),
-                              ],
+                            child: Text(
+                              '${index + 1}.  ${lesson.title}',
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                          if (onEditLessonSubscription != null)
+                          if (onEditSubscription != null)
                             IconButton(
                               icon: Icon(
                                 Icons.card_membership_rounded,
                                 size: 15,
-                                color: lesson.accessType == 'premium' ? kPremiumColor : LmsColors.textGrey,
+                                color: lesson.accessType == 'premium'
+                                    ? kPremiumColor
+                                    : LmsColors.textGrey,
                               ),
                               tooltip: 'Edit subscription',
-                              onPressed: () => onEditLessonSubscription!(lesson),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: onEditSubscription,
                             ),
-                          if (showLessonActions) ...[
+                          if (showActions) ...[
                             IconButton(
-                              icon: const Icon(Icons.edit_rounded, size: 15, color: LmsColors.textDark),
+                              icon: const Icon(
+                                Icons.edit_rounded,
+                                size: 15,
+                                color: LmsColors.textDark,
+                              ),
                               tooltip: 'Edit lesson',
-                              onPressed: onEditLesson != null ? () => onEditLesson!(lesson) : null,
+                              visualDensity: VisualDensity.compact,
+                              onPressed: onEdit,
                             ),
                             IconButton(
-                              icon: const Icon(Icons.delete_outline_rounded, size: 15, color: LmsColors.error),
+                              icon: const Icon(
+                                Icons.delete_outline_rounded,
+                                size: 15,
+                                color: LmsColors.error,
+                              ),
                               tooltip: 'Delete lesson',
-                              onPressed: onDeleteLesson != null ? () => onDeleteLesson!(lesson) : null,
+                              visualDensity: VisualDensity.compact,
+                              onPressed: onDelete,
                             ),
                           ],
                         ],
                       ),
-                    ),
+                      const SizedBox(height: 3),
+                      LessonBadgeRow(
+                        type: lesson.type,
+                        status: lesson.status,
+                        accessType: lesson.accessType,
+                        isFreePreview: lesson.isFreePreview,
+                        planLabels: [
+                          for (final id in lesson.planIds)
+                            planTitles[id] ?? 'Plan #$id',
+                        ],
+                        hasVideo: lesson.hasVideo,
+                        compact: true,
+                      ),
+                    ],
                   ),
-                ),
-              );
-            }),
-          if (onAddLesson != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: SizedBox(
-                width: double.infinity,
-                child: TextButton.icon(
-                  onPressed: onAddLesson,
-                  style: TextButton.styleFrom(
-                    foregroundColor: LmsColors.primary,
-                    backgroundColor: LmsColors.primarySoft,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  icon: const Icon(Icons.add_rounded, size: 16),
-                  label: const Text('Add Lesson', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
                 ),
               ),
-            ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }

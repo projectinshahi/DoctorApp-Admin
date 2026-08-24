@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:admin_drapp/models/chapter_summary_model.dart';
@@ -11,11 +13,15 @@ class _FakeChapterService extends ChapterService {
   final ChapterListResult result;
   int? askedFor;
 
-  _FakeChapterService(this.result);
+  /// Completed by the test so a load can be held open mid-flight.
+  final Completer<void>? gate;
+
+  _FakeChapterService(this.result, {this.gate});
 
   @override
   Future<ChapterListResult> getChapters({required int courseTypeId}) async {
     askedFor = courseTypeId;
+    if (gate != null) await gate!.future;
     return result;
   }
 }
@@ -62,5 +68,20 @@ void main() {
     expect(provider.loadedOnce, isTrue);
     expect(provider.errorMessage, 'Session expired.');
     expect(provider.chapters, isEmpty);
+  });
+
+  test('a load that outlives the provider does not throw', () async {
+    // The card disposes its provider when the screen is popped; the request
+    // it started still lands afterwards.
+    final gate = Completer<void>();
+    final provider = ChapterListProvider(
+      service: _FakeChapterService(ChapterListResult.success(const []), gate: gate),
+    );
+
+    final inFlight = provider.load(15);
+    provider.dispose();
+    gate.complete();
+
+    await expectLater(inFlight, completes);
   });
 }

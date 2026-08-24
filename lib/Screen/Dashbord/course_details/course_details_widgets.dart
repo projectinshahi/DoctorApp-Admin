@@ -51,7 +51,12 @@ class SectionTitle extends StatelessWidget {
   final String title;
   final int count;
   final VoidCallback? onAdd;
-  const SectionTitle(this.title, {required this.count, this.onAdd});
+
+  /// Sits to the left of the add button - for actions that belong to the
+  /// section but aren't "add another one of these".
+  final Widget? action;
+
+  const SectionTitle(this.title, {required this.count, this.onAdd, this.action});
 
   @override
   Widget build(BuildContext context) {
@@ -83,6 +88,10 @@ class SectionTitle extends StatelessWidget {
           ),
         ),
         const Spacer(),
+        if (action != null) ...[
+          action!,
+          const SizedBox(width: 8),
+        ],
         if (onAdd != null)
           TextButton.icon(
             onPressed: onAdd,

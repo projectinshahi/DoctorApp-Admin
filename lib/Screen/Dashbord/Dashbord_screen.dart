@@ -2,34 +2,18 @@ import 'package:admin_drapp/Screen/Dashbord/student_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/const/api_constant.dart';
 import '../../core/const/responsive_const.dart';
 import '../../core/theam/theam_dart.dart';
-import '../../provider/course_provider.dart';
 import '../../provider/admin_student_provider.dart';
 import '../QuestionBank/question_bank_screen.dart';
-import 'add_course_screen.dart';
+import '../../provider/course_get_provider.dart';
 import 'course_list_screen.dart';
+import 'dashboard_overview.dart';
+import 'coming_soon_view.dart';
+import 'lesson_video_screen.dart';
+import 'subscription_plans_screen.dart';
 
 // ── Simple data models ──────────────────────────────────────────────
-class StatCard {
-  final String label;
-  final String value;
-  final String? delta;
-  const StatCard({required this.label, required this.value, this.delta});
-}
-
-class QuizAttempt {
-  final String title;
-  final String attempts;
-  const QuizAttempt({required this.title, required this.attempts});
-}
-
-class ModerationComment {
-  final String author;
-  final String snippet;
-  const ModerationComment({required this.author, required this.snippet});
-}
 
 class NavItem {
   final IconData icon;
@@ -53,31 +37,10 @@ class AdminDashboardScreen extends StatefulWidget {
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   String _selected = "Dashboard";
 
-  final List<StatCard> _stats = const [
-    StatCard(label: "Registered students", value: "18,204", delta: "+312 this week"),
-    StatCard(label: "Active subscriptions", value: "6,540", delta: "+84 this week"),
-    StatCard(label: "Courses / videos", value: "142 / 1,860"),
-    StatCard(label: "Questions / quizzes", value: "4,920 / 316"),
-  ];
-
-  final List<QuizAttempt> _mostAttempted = const [
-    QuizAttempt(title: "Algebra basics — chapter test", attempts: "2,140 attempts"),
-    QuizAttempt(title: "Newton's laws quiz", attempts: "1,880 attempts"),
-    QuizAttempt(title: "Cell biology — MCQ set 2", attempts: "1,502 attempts"),
-    QuizAttempt(title: "English grammar — tenses", attempts: "1,190 attempts"),
-  ];
-
-  final List<ModerationComment> _comments = const [
-    ModerationComment(author: "Riya S.", snippet: "This explanation doesn't match…"),
-    ModerationComment(author: "Arjun K.", snippet: "reported, video: Ch 4 fractions"),
-    ModerationComment(author: "Meera P.", snippet: "Can we get a part 2?"),
-  ];
-
   static const List<NavSection> _sections = [
     NavSection("overview", [NavItem(Icons.grid_view_rounded, "Dashboard")]),
     NavSection("content", [
       NavItem(Icons.menu_book_outlined, "Courses"),
-      NavItem(Icons.add_box_outlined, "Add course"),
       NavItem(Icons.videocam_outlined, "Videos"),
       NavItem(Icons.help_outline_rounded, "Question Bank"),
       NavItem(Icons.assignment_outlined, "Quizzes"),
@@ -106,27 +69,35 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       backgroundColor: LmsColors.bg,
       appBar: isMobile
           ? AppBar(
-        backgroundColor: LmsColors.surface,
-        elevation: 0,
-        foregroundColor: LmsColors.textDark,
-        title: Text(
-          _selected,
-          style: const TextStyle(fontWeight: FontWeight.w800, color: LmsColors.textDark),
-        ),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 12),
-            child: Center(child: ApiEnvironmentChip()),
-          ),
-        ],
-      )
+              backgroundColor: LmsColors.surface,
+              elevation: 0,
+              foregroundColor: LmsColors.textDark,
+              title: Text(
+                _selected,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: LmsColors.textDark,
+                ),
+              ),
+            )
           : null,
       drawer: isMobile
-          ? Drawer(child: _Sidebar(selected: _selected, sections: _sections, onSelect: _selectNav))
+          ? Drawer(
+              child: _Sidebar(
+                selected: _selected,
+                sections: _sections,
+                onSelect: _selectNav,
+              ),
+            )
           : null,
       body: Row(
         children: [
-          if (!isMobile) _Sidebar(selected: _selected, sections: _sections, onSelect: _selectNav),
+          if (!isMobile)
+            _Sidebar(
+              selected: _selected,
+              sections: _sections,
+              onSelect: _selectNav,
+            ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -140,7 +111,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     width: double.infinity,
                     color: LmsColors.bg,
                     padding: EdgeInsets.symmetric(
-                      horizontal: LmsResponsive.value(context, mobile: 16, tablet: 24, desktop: 32),
+                      horizontal: LmsResponsive.value(
+                        context,
+                        mobile: 16,
+                        tablet: 24,
+                        desktop: 32,
+                      ),
                       vertical: 20,
                     ),
                     child: _TopBar(title: _selected),
@@ -151,9 +127,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   Expanded(
                     child: SingleChildScrollView(
                       padding: EdgeInsets.fromLTRB(
-                        LmsResponsive.value(context, mobile: 16, tablet: 24, desktop: 32),
+                        LmsResponsive.value(
+                          context,
+                          mobile: 16,
+                          tablet: 24,
+                          desktop: 32,
+                        ),
                         isMobile ? 20 : 0,
-                        LmsResponsive.value(context, mobile: 16, tablet: 24, desktop: 32),
+                        LmsResponsive.value(
+                          context,
+                          mobile: 16,
+                          tablet: 24,
+                          desktop: 32,
+                        ),
                         40,
                       ),
                       child: LmsResponsiveCenter(
@@ -174,17 +160,43 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     switch (_selected) {
       case "Courses":
         return const CourseListScreen();
-      case "Add course":
+      case "Videos":
         return ChangeNotifierProvider(
-          create: (_) => CourseProvider(),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: CourseListAddForm(
-              onCreated: () {
-                setState(() => _selected = "Courses");
-              },
-            ),
-          ),
+          create: (_) => CourseListGetProvider(),
+          child: const LessonVideoScreen(),
+        );
+      case "Subscriptions":
+        return ChangeNotifierProvider(
+          create: (_) => CourseListGetProvider(),
+          child: const SubscriptionPlansScreen(),
+        );
+      case "Question Bank":
+        return const ComingSoonView(
+          title: 'Question Bank',
+          icon: Icons.help_outline_rounded,
+          description:
+              'Browsing, creating and editing questions is being rebuilt and '
+              'will land here.',
+          insteadHint:
+              'Quiz lessons still pick their questions in the lesson sheet, '
+              'under Courses.',
+        );
+      case "Quizzes":
+        return const ComingSoonView(
+          title: 'Quizzes',
+          icon: Icons.assignment_outlined,
+          description:
+              'The quiz health report - orphaned, underfilled and healthy '
+              'quizzes - is being rebuilt and will land here.',
+          insteadHint:
+              'A lesson\'s quiz and its questions are on the lesson detail '
+              'screen today.',
+        );
+      case "Comments":
+        return const ComingSoonView(
+          title: 'Comments',
+          icon: Icons.chat_bubble_outline_rounded,
+          description: 'Student comments and moderation will land here.',
         );
       case "Students":
         return ChangeNotifierProvider(
@@ -193,39 +205,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         );
       case "Dashboard":
       default:
-        return _buildDashboardContent();
+        return MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => CourseListGetProvider()),
+            ChangeNotifierProvider(create: (_) => AdminStudentProvider()),
+          ],
+          child: const DashboardOverview(),
+        );
     }
-  }
-
-  Widget _buildDashboardContent() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _StatRow(stats: _stats),
-        const SizedBox(height: 20),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth > 760;
-            final quizzesCard = _MostAttemptedCard(items: _mostAttempted);
-            final commentsCard = _ModerationCard(comments: _comments);
-
-            if (isWide) {
-              return IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: quizzesCard),
-                    const SizedBox(width: 20),
-                    Expanded(child: commentsCard),
-                  ],
-                ),
-              );
-            }
-            return Column(children: [quizzesCard, const SizedBox(height: 20), commentsCard]);
-          },
-        ),
-      ],
-    );
   }
 }
 
@@ -235,7 +222,11 @@ class _Sidebar extends StatelessWidget {
   final List<NavSection> sections;
   final ValueChanged<String> onSelect;
 
-  const _Sidebar({required this.selected, required this.sections, required this.onSelect});
+  const _Sidebar({
+    required this.selected,
+    required this.sections,
+    required this.onSelect,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -253,14 +244,25 @@ class _Sidebar extends StatelessWidget {
                   Container(
                     width: 34,
                     height: 34,
-                    decoration: BoxDecoration(color: LmsColors.primary, borderRadius: BorderRadius.circular(9)),
-                    child: const Icon(Icons.school_rounded, color: Colors.white, size: 18),
+                    decoration: BoxDecoration(
+                      color: LmsColors.primary,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: const Icon(
+                      Icons.school_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
                   ),
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text(
-                      "SAS LMS admin",
-                      style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: LmsColors.textDark),
+                      "dr.skm's academy",
+                      style: TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w800,
+                        color: LmsColors.textDark,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -281,7 +283,11 @@ class _Sidebar extends StatelessWidget {
                   ),
                 ),
                 for (final item in section.items)
-                  _NavTile(item: item, isSelected: item.label == selected, onTap: () => onSelect(item.label)),
+                  _NavTile(
+                    item: item,
+                    isSelected: item.label == selected,
+                    onTap: () => onSelect(item.label),
+                  ),
                 const SizedBox(height: 18),
               ],
             ],
@@ -297,7 +303,11 @@ class _NavTile extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
 
-  const _NavTile({required this.item, required this.isSelected, required this.onTap});
+  const _NavTile({
+    required this.item,
+    required this.isSelected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +326,11 @@ class _NavTile extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Icon(item.icon, size: 19, color: isSelected ? LmsColors.primary : LmsColors.textGrey),
+                Icon(
+                  item.icon,
+                  size: 19,
+                  color: isSelected ? LmsColors.primary : LmsColors.textGrey,
+                ),
                 const SizedBox(width: 12),
                 Text(
                   item.label,
@@ -350,20 +364,28 @@ class _TopBar extends StatelessWidget {
             title,
             textAlign: TextAlign.left,
             style: TextStyle(
-              fontSize: LmsResponsive.value<double>(context, mobile: 24, tablet: 28, desktop: 32),
+              fontSize: LmsResponsive.value<double>(
+                context,
+                mobile: 24,
+                tablet: 28,
+                desktop: 32,
+              ),
               fontWeight: FontWeight.w800,
               color: LmsColors.textDark,
             ),
           ),
         ),
-        const ApiEnvironmentChip(),
         const SizedBox(width: 12),
         CircleAvatar(
           radius: 20,
           backgroundColor: LmsColors.border,
           child: const Text(
             "AD",
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: LmsColors.textDark),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: LmsColors.textDark,
+            ),
           ),
         ),
       ],
@@ -372,209 +394,3 @@ class _TopBar extends StatelessWidget {
 }
 
 // ── Stat cards row (unchanged) ────────────────────────────────────
-class _StatRow extends StatelessWidget {
-  final List<StatCard> stats;
-  const _StatRow({required this.stats});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final columns = width > 900 ? 4 : (width > 560 ? 2 : 1);
-        return Wrap(
-          spacing: 16,
-          runSpacing: 16,
-          children: stats.map((s) {
-            final cardWidth = (width - (columns - 1) * 16) / columns;
-            return SizedBox(width: cardWidth, child: _StatCardView(stat: s));
-          }).toList(),
-        );
-      },
-    );
-  }
-}
-
-class _StatCardView extends StatelessWidget {
-  final StatCard stat;
-  const _StatCardView({required this.stat});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: LmsColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: LmsColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(stat.label, style: const TextStyle(fontSize: 13.5, color: LmsColors.textGrey, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 12),
-          Text(
-            stat.value,
-            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: LmsColors.textDark, height: 1.1),
-          ),
-          if (stat.delta != null) ...[
-            const SizedBox(height: 10),
-            Text(stat.delta!, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: LmsColors.success)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _MostAttemptedCard extends StatelessWidget {
-  final List<QuizAttempt> items;
-  const _MostAttemptedCard({required this.items});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: LmsColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: LmsColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("Most-attempted quizzes",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: LmsColors.textDark)),
-          const SizedBox(height: 16),
-          for (int i = 0; i < items.length; i++) ...[
-            _QuizRow(item: items[i]),
-            if (i != items.length - 1) const SizedBox(height: 14),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _QuizRow extends StatelessWidget {
-  final QuizAttempt item;
-  const _QuizRow({required this.item});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Text(item.title,
-              style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: LmsColors.textDark, height: 1.3)),
-        ),
-        const SizedBox(width: 12),
-        Text(item.attempts,
-            textAlign: TextAlign.right,
-            style: const TextStyle(fontSize: 13.5, color: LmsColors.textGrey, fontWeight: FontWeight.w500)),
-      ],
-    );
-  }
-}
-
-class _ModerationCard extends StatelessWidget {
-  final List<ModerationComment> comments;
-  const _ModerationCard({required this.comments});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: LmsColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: LmsColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("Comments awaiting review",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: LmsColors.textDark)),
-          const SizedBox(height: 16),
-          for (int i = 0; i < comments.length; i++) ...[
-            _CommentRow(comment: comments[i]),
-            if (i != comments.length - 1) const SizedBox(height: 14),
-          ],
-          const SizedBox(height: 18),
-          SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: OutlinedButton(
-              onPressed: () {},
-              style: OutlinedButton.styleFrom(
-                foregroundColor: LmsColors.textDark,
-                side: const BorderSide(color: LmsColors.border),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              child: const Text("Go to moderation", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CommentRow extends StatelessWidget {
-  final ModerationComment comment;
-  const _CommentRow({required this.comment});
-
-  @override
-  Widget build(BuildContext context) {
-    return RichText(
-      text: TextSpan(
-        style: const TextStyle(fontSize: 14, color: LmsColors.textDark, height: 1.4),
-        children: [
-          TextSpan(text: "${comment.author} ", style: const TextStyle(fontWeight: FontWeight.w800)),
-          TextSpan(text: "— \"${comment.snippet}\"", style: const TextStyle(fontWeight: FontWeight.w400, color: LmsColors.textDark)),
-        ],
-      ),
-    );
-  }
-}
-
-/// Shows which backend the app is talking to, but only when it isn't the
-/// deployed one. Silent in production so the normal UI stays clean; visible
-/// the moment you point at localhost, so local data is never mistaken for
-/// real data.
-class ApiEnvironmentChip extends StatelessWidget {
-  const ApiEnvironmentChip({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    if (ApiConstant.isProduction) return const SizedBox.shrink();
-
-    return Tooltip(
-      message: 'API base URL: ${ApiConstant.root}',
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.orange.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.orange.withValues(alpha: 0.45)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.dns_outlined, size: 13, color: Colors.orange),
-            const SizedBox(width: 5),
-            Text(
-              ApiConstant.environmentLabel,
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-                color: Colors.orange,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

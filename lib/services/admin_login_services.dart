@@ -15,7 +15,7 @@ class AdminAuthService {
     late final http.Response response;
     try {
       response = await http.post(
-        Uri.parse(ApiConstant.adminlogn), // e.g. "http://localhost:3000/api/auth/admin/login"
+        Uri.parse(ApiConstant.adminlogn), // -> https://doctorapp-backend-30gd.onrender.com/api/auth/admin/login
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'email': email,
@@ -28,8 +28,9 @@ class AdminAuthService {
       rethrow;
     }
 
+    // The body is deliberately not printed: it carries the admin bearer token,
+    // and anything printed here ends up in terminal scrollback and log files.
     print('AdminAuthService: Status code: ${response.statusCode}');
-    print('AdminAuthService: Response body: ${response.body}');
 
     if (response.statusCode == 200) {
       final result = AdminAuthResultModel.fromJson(jsonDecode(response.body));
@@ -43,7 +44,7 @@ class AdminAuthService {
         role: result.admin.role,
       );
 
-      print('AdminAuthService: Token saved locally.');
+      print('AdminAuthService: Logged in as ${result.admin.email}, token saved.');
 
       return result;
     } else {

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/const/responsive_const.dart';
 import '../../core/theam/theam_dart.dart';
+import '../../widget/shimmer_loading.dart';
 import '../../models/question_bank_model.dart';
 import '../../provider/question_bank_provider.dart';
 import '../../widget/breadcrumb_widget.dart';
@@ -13,7 +14,7 @@ import 'subject_topic_manager_screen.dart';
 /// What the delete endpoint can't do yet, said up front instead of being
 /// discovered through a 409. The server's own message is still what the
 /// snackbar shows after a failed attempt.
-const String kDeleteBlockedCopy = "Deactivate instead — quiz usage can't be verified yet";
+const String kDeleteWarningCopy = 'This cannot be undone';
 
 /// Sort options the list offers. Values are passed straight through as the
 /// `sort` query param.
@@ -142,8 +143,10 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
     }
   }
 
-  /// The delete action stays visible. The dialog leads with why it will very
-  /// likely fail; a failed attempt surfaces the backend's own message.
+  /// Deleting now succeeds, and cascades the question's options and tags with
+  /// no way back - so the dialog leads with that and keeps deactivate as the
+  /// reversible option. A 409 (a lesson still depends on it) surfaces the
+  /// backend's own message, which already says what to do.
   Future<void> _confirmDelete(Question question) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -154,13 +157,13 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(kDeleteBlockedCopy,
+            Text(kDeleteWarningCopy,
                 style: TextStyle(fontWeight: FontWeight.w700, color: LmsColors.error)),
             SizedBox(height: 10),
             Text(
-              'Until the quiz module ships the server refuses deletes, so this '
-              'will almost certainly fail. Deactivating hides the question '
-              'everywhere without risking a quiz that already uses it.',
+              'The question, its options and its tags are removed permanently, '
+              'and every quiz drawing on this topic serves one fewer question. '
+              'Deactivating hides it from students and can be undone.',
               style: TextStyle(fontSize: 13.5, height: 1.4),
             ),
           ],
@@ -182,10 +185,15 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
 
     if (!mounted) return;
     if (success) {
-      _showSnack('Question deleted');
+      // A quiz is a filter, so one deletion can shrink several pools at once.
+      final affected = provider.lastAffectedQuizzes;
+      _showSnack(affected == null || affected == 0
+          ? 'Question deleted'
+          : 'Deleted. $affected quiz${affected == 1 ? '' : 'zes'} '
+              'now ${affected == 1 ? 'has' : 'have'} one fewer question.');
       await _refresh();
     } else {
-      _showSnack(provider.errorMessage ?? kDeleteBlockedCopy, isError: true);
+      _showSnack(provider.errorMessage ?? 'Failed to delete question', isError: true);
     }
   }
 
@@ -279,10 +287,9 @@ class _QuestionBankScreenState extends State<QuestionBankScreen> {
   List<Widget> _buildList(QuestionListProvider list) {
     if (list.isLoading && list.questions.isEmpty) {
       return const [
-        Padding(
-          padding: EdgeInsets.symmetric(vertical: 60),
-          child: Center(child: CircularProgressIndicator(color: LmsColors.primary)),
-        ),
+        // Skeleton rows rather than a spinner: the shape of what is coming is
+        // already known, so the layout doesn't jump when it lands.
+        ShimmerListSkeleton(rowCount: 5),
       ];
     }
 

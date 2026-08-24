@@ -34,15 +34,7 @@ class ChapterListResult {
       ChapterListResult._(isSuccess: false, errorMessage: message);
 }
 
-/// Chapters ("Syllabus") live under a course type (exam type):
-///
-/// CREATE -> POST   /api/course-types/:courseTypeId/chapters
-/// UPDATE -> PUT    /api/course-types/:courseTypeId/chapters/:chapterId
-/// DELETE -> DELETE /api/course-types/:courseTypeId/chapters/:chapterId
-///
-/// NOTE: unlike CourseTypeService, the backend for chapters returns
-/// errors nested as { "error": { "message": "..." } }, not flat
-/// { "message": "..." } - the parser below matches that exact shape.
+
 class ChapterService {
   final String baseUrl;
 

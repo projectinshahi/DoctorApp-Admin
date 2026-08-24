@@ -9,6 +9,7 @@ import '../../provider/course_provider.dart'; // adjust path to your CourseProvi
 import 'add_course_screen.dart';
 import 'course_details_screen.dart';
 import 'edit_course_type_sheet.dart';
+import '../../widget/shimmer_loading.dart';
 
 class CourseListScreen extends StatefulWidget {
   const CourseListScreen({super.key});
@@ -135,8 +136,8 @@ class _CourseListScreenState extends State<CourseListScreen> {
           builder: (context, provider, child) {
             if (provider.isLoadingCourses) {
               return const Padding(
-                padding: EdgeInsets.all(40),
-                child: Center(child: CircularProgressIndicator()),
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: ShimmerListSkeleton(rowCount: 4),
               );
             }
 

@@ -233,7 +233,9 @@ class _AddEditPlanSheetState extends State<_AddEditPlanSheet> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: LmsColors.border),
                     ),
-                    child: SwitchListTile(
+                    child: Material(
+                  color: Colors.transparent,
+                  child: SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _isActive,
                       onChanged: (value) => setState(() => _isActive = value),
@@ -244,6 +246,7 @@ class _AddEditPlanSheetState extends State<_AddEditPlanSheet> {
                         style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
                       ),
                     ),
+                  ),
                   ),
                 ],
 

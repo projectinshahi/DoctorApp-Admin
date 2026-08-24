@@ -11,6 +11,10 @@ import '../../models/lesson_detail_model.dart';
 import '../../provider/lesson_details_provider.dart';
 import '../../services/lesson_services.dart';
 import '../../provider/lesson_upload_provider.dart';
+import '../../provider/question_bank_provider.dart';
+import '../../widget/lesson_quiz_section.dart';
+import '../../widget/shimmer_loading.dart';
+import '../../widget/quiz_preview_sheet.dart';
 import '../../widget/note_web_viewer_stub.dart'
 if (dart.library.html) '../../widget/note_web_viewer_web.dart';
 import '../../models/panal_model.dart';
@@ -34,6 +38,9 @@ class LessonDetailScreen extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => LessonDetailsProvider()..loadLesson(lessonId, includeChapter: true)),
         ChangeNotifierProvider(create: (_) => LessonUpdateProvider()),
+        // Resolves the quiz's subjectId/topicId to names. Its own instance so
+        // the Question Bank screen's taxonomy state is untouched.
+        ChangeNotifierProvider(create: (_) => SubjectTopicProvider()),
       ],
       child: const _LessonDetailBody(),
     );
@@ -197,8 +204,8 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
       initialNoteUrl: lesson.noteUrl,
       initialNotePublicId: lesson.notePublicId,
       initialNoteFileType: lesson.noteFileType,
-      initialContent: lesson.content, // legacy reference, read-only
       initialQuizId: lesson.quizId,
+      initialQuizTitle: lesson.quiz?.title,
       initialIsFreePreview: lesson.isFreePreview,
       initialAccessType: lesson.accessTypeEnum,
       initialStatus: lesson.statusEnum,
@@ -1352,19 +1359,45 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     );
   }
 
+  /// Loads subjects, then this quiz's topics, once per lesson.
+  ///
+  /// The quiz nested on a lesson carries subjectId/topicId but not their
+  /// names - those ride along only on quiz LIST rows - so the card would
+  /// otherwise read "Subject 12 / Topic 21".
+  void _ensureTaxonomy(BuildContext context, LessonDetail lesson) {
+    final quiz = lesson.quiz;
+    if (quiz == null || _taxonomyLoadedFor == quiz.id) return;
+    _taxonomyLoadedFor = quiz.id;
+
+    final taxonomy = context.read<SubjectTopicProvider>();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await taxonomy.loadSubjects();
+      await taxonomy.loadTopics(subjectId: quiz.subjectId);
+    });
+  }
+
+  int? _taxonomyLoadedFor;
+
   @override
   Widget build(BuildContext context) {
     return Consumer2<LessonDetailsProvider, LessonUpdateProvider>(
       builder: (context, detailsProvider, updateProvider, child) {
         if (detailsProvider.isLoading) {
           return const Scaffold(
-            body: Center(child: CircularProgressIndicator(color: LmsColors.primary)),
+            backgroundColor: Colors.white,
+            body: LessonDetailSkeleton(),
           );
         }
 
         if (detailsProvider.errorMessage != null) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Lesson')),
+            backgroundColor: Colors.white,
+            appBar: AppBar(
+              title: const Text('Lesson'),
+              backgroundColor: Colors.white,
+              elevation: 0,
+              foregroundColor: LmsColors.textDark,
+            ),
             body: Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -1383,7 +1416,10 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
 
         final lesson = detailsProvider.lesson;
         if (lesson == null) {
-          return const Scaffold(body: Center(child: Text('Lesson not found.')));
+          return const Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(child: Text('Lesson not found.')),
+          );
         }
 
         if (lesson.hasVideo) {
@@ -1391,9 +1427,9 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
         }
 
         return Scaffold(
-          backgroundColor: LmsColors.bg,
+          backgroundColor: Colors.white,
           appBar: AppBar(
-            backgroundColor: LmsColors.bg,
+            backgroundColor: Colors.white,
             elevation: 0,
             foregroundColor: LmsColors.textDark,
             title: const Text('Lesson', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
@@ -1446,25 +1482,52 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                   const SizedBox(height: 20),
                 ],
 
-                if (lesson.typeEnum == LessonType.quiz && lesson.content != null) ...[
+                if (lesson.typeEnum == LessonType.quiz) ...[
                   _sectionHeader('Quiz'),
+                  Builder(builder: (context) {
+                    _ensureTaxonomy(context, lesson);
+                    return const SizedBox.shrink();
+                  }),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: LmsColors.surface,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: LmsColors.border),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.quiz_outlined, color: LmsColors.primary),
-                          const SizedBox(width: 10),
-                          Expanded(child: Text('Quiz reference: ${lesson.content}')),
-                        ],
-                      ),
+                    child: LessonQuizSection(
+                      lessonType: lesson.type,
+                      quiz: lesson.quiz,
+                      subjectNames:
+                          context.watch<SubjectTopicProvider>().subjectNamesById,
+                      topicNames:
+                          context.watch<SubjectTopicProvider>().topicNamesById,
+                      // Both routes go through the lesson sheet - it already
+                      // owns the quiz picker, filters and "New Quiz" dialog.
+                      onPreview: () => lesson.quiz == null
+                          ? null
+                          : showQuizPreviewSheet(context, lesson.quiz!.id),
+                      onLink: () => _openEditSheet(context, lesson),
                     ),
+                  ),
+
+                  // The questions themselves, on the page rather than behind a
+                  // modal. Opening a sheet to answer "what is in this quiz?"
+                  // was a step with nothing on the other side of it.
+                  if (lesson.quiz != null) ...[
+                    const SizedBox(height: 14),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: QuizQuestionsInline(quizId: lesson.quiz!.id),
+                    ),
+                  ],
+                ],
+
+                // Superseded by the linked quiz above, but old lessons still
+                // carry it - show it only when there is nothing else to show.
+                if (lesson.typeEnum == LessonType.quiz &&
+                    lesson.quiz == null &&
+                    lesson.content != null) ...[
+                  const SizedBox(height: 10),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('Legacy reference: ${lesson.content}',
+                        style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey)),
                   ),
                 ],
 

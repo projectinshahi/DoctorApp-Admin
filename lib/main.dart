@@ -43,8 +43,9 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => SubjectTopicProvider()),
       ],
       child: MaterialApp(
-         debugShowCheckedModeBanner: false,
-        home: AdminLoginScreen()
+        title: "dr.skm's academy",
+        debugShowCheckedModeBanner: false,
+        home: AdminLoginScreen(),
       ),
     );
   }

@@ -7,6 +7,7 @@ import '../../models/question_bank_model.dart';
 import '../../provider/question_bank_provider.dart';
 import '../../widget/breadcrumb_widget.dart';
 import '../../widget/empty_row.dart';
+import '../../widget/shimmer_loading.dart';
 
 /// Master-detail manager for the question bank taxonomy: pick a subject on
 /// the left, manage its topics on the right. One subject is selected at a
@@ -226,7 +227,7 @@ class _SubjectsPanel extends StatelessWidget {
       child: provider.isLoading && provider.subjects.isEmpty
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 28),
-              child: Center(child: CircularProgressIndicator(color: LmsColors.primary)),
+              child: ShimmerListSkeleton(rowCount: 4, padding: EdgeInsets.zero),
             )
           : provider.subjects.isEmpty
               ? const EmptyRow(text: 'No subjects yet.')
@@ -277,7 +278,7 @@ class _TopicsPanel extends StatelessWidget {
           : !isLoaded || provider.isLoading
               ? const Padding(
                   padding: EdgeInsets.symmetric(vertical: 28),
-                  child: Center(child: CircularProgressIndicator(color: LmsColors.primary)),
+                  child: ShimmerListSkeleton(rowCount: 4, padding: EdgeInsets.zero),
                 )
               : provider.topics.isEmpty
                   ? const EmptyRow(text: 'No topics in this subject yet.')

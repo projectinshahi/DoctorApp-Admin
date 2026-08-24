@@ -108,6 +108,24 @@ class ChapterListProvider extends ChangeNotifier {
   /// count from the course-types list instead of a premature "0 syllabus".
   bool loadedOnce = false;
 
+  /// A request can outlive the widget that started it: the screen is popped
+  /// while the load is still in flight, and the continuation notifies a
+  /// provider that has already been disposed. ChangeNotifier throws on that,
+  /// so the notification is dropped instead - nothing is listening anyway.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
   Future<void> load(int courseTypeId) async {
     isLoading = true;
     errorMessage = null;

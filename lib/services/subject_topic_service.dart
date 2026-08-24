@@ -88,7 +88,29 @@ class SubjectTopicService {
         'Authorization': 'Bearer $token',
       };
 
+  /// Decodes a body that is *supposed* to be JSON. Returns null when it is
+  /// not - an HTML error page from a server missing the route, typically -
+  /// so the status code can still be reported instead of a parse failure.
+  dynamic _tryDecode(String body) {
+    if (body.isEmpty) return <String, dynamic>{};
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return null;
+    }
+  }
+
   String _messageFrom(dynamic decoded, int statusCode, String failureVerb) {
+    if (statusCode == 401) return 'Session expired. Please log in again.';
+
+    // A 404 here is not missing data - it is a server that does not have this
+    // route at all, which is what an out-of-date deployment looks like. The
+    // body is an HTML error page, so there is no message to read out of it.
+    if (statusCode == 404) {
+      return 'The server has no endpoint to $failureVerb - '
+          'it is likely running an older build than this app expects.';
+    }
+
     if (decoded is Map && decoded['error'] is Map && decoded['error']['message'] != null) {
       return decoded['error']['message'].toString();
     }
@@ -111,8 +133,7 @@ class SubjectTopicService {
 
     try {
       final response = await http.get(uri, headers: _headers(adminToken)).timeout(_timeout);
-      final decoded =
-          response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+      final decoded = _tryDecode(response.body);
 
       if (response.statusCode == 200) {
         return SubjectListResult.success(parseSubjects(decoded));
@@ -169,8 +190,7 @@ class SubjectTopicService {
           ? await http.post(uri, headers: headers, body: encoded).timeout(_timeout)
           : await http.patch(uri, headers: headers, body: encoded).timeout(_timeout);
 
-      final decoded =
-          response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+      final decoded = _tryDecode(response.body);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final raw = decoded is Map ? decoded['subject'] : null;
@@ -205,8 +225,7 @@ class SubjectTopicService {
 
     try {
       final response = await http.get(uri, headers: _headers(adminToken)).timeout(_timeout);
-      final decoded =
-          response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+      final decoded = _tryDecode(response.body);
 
       if (response.statusCode == 200) {
         return TopicListResult.success(parseTopics(decoded));
@@ -267,8 +286,7 @@ class SubjectTopicService {
           ? await http.post(uri, headers: headers, body: encoded).timeout(_timeout)
           : await http.patch(uri, headers: headers, body: encoded).timeout(_timeout);
 
-      final decoded =
-          response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+      final decoded = _tryDecode(response.body);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final raw = decoded is Map ? decoded['topic'] : null;
