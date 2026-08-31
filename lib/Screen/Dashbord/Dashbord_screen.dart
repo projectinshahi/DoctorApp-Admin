@@ -12,6 +12,7 @@ import 'dashboard_overview.dart';
 import 'coming_soon_view.dart';
 import 'lesson_video_screen.dart';
 import 'subscription_plans_screen.dart';
+import '../Test/test_list_screen.dart';
 
 // ── Simple data models ──────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       NavItem(Icons.videocam_outlined, "Videos"),
       NavItem(Icons.help_outline_rounded, "Question Bank"),
       NavItem(Icons.assignment_outlined, "Quizzes"),
+      NavItem(Icons.fact_check_outlined, "Tests"),
     ]),
     NavSection("people", [
       NavItem(Icons.people_outline_rounded, "Students"),
@@ -169,6 +171,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return ChangeNotifierProvider(
           create: (_) => CourseListGetProvider(),
           child: const SubscriptionPlansScreen(),
+        );
+      case "Tests":
+        return ChangeNotifierProvider(
+          create: (_) => CourseListGetProvider(),
+          child: const TestListScreen(),
         );
       case "Question Bank":
         return const ComingSoonView(
