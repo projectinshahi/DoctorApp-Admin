@@ -7,6 +7,10 @@ class AdminLocalStorage {
   static const String _adminNameKey = 'admin_name';
   static const String _adminRoleKey = 'admin_role';
 
+  /// When the moderator last opened the comments screen. Anything newer than
+  /// this is "new" and drives the sidebar badge.
+  static const String _commentsSeenKey = 'comments_last_seen_at';
+
   // Save admin token
   static Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
@@ -63,6 +67,17 @@ class AdminLocalStorage {
     return token != null && token.isNotEmpty;
   }
 
+  static Future<void> markCommentsSeen(DateTime at) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_commentsSeenKey, at.toUtc().toIso8601String());
+  }
+
+  static Future<DateTime?> getCommentsSeenAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_commentsSeenKey);
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
+
   // Clear all admin data (logout)
   static Future<void> clearAdminData() async {
     final prefs = await SharedPreferences.getInstance();
@@ -71,5 +86,6 @@ class AdminLocalStorage {
     await prefs.remove(_adminEmailKey);
     await prefs.remove(_adminNameKey);
     await prefs.remove(_adminRoleKey);
+    await prefs.remove(_commentsSeenKey);
   }
 }

@@ -108,6 +108,53 @@ class LessonProgress {
       );
 }
 
+/// Where a student placed on a test's leaderboard.
+///
+/// Null while the attempt is still running, and identical across a student's
+/// retakes of the same paper - a leaderboard ranks students, not attempts.
+class AttemptLeaderboard {
+  final int? rank;
+  final int? totalParticipants;
+  final num? bestScore;
+
+  const AttemptLeaderboard({
+    this.rank,
+    this.totalParticipants,
+    this.bestScore,
+  });
+
+  bool get isEmpty => rank == null && bestScore == null;
+
+  /// "3rd of 24". The ordinal reads faster than "rank 3" in a list.
+  String? get placeLabel {
+    final r = rank;
+    if (r == null) return null;
+    final total = totalParticipants;
+    return total == null ? _ordinal(r) : '${_ordinal(r)} of $total';
+  }
+
+  static String _ordinal(int n) {
+    // 11th, 12th, 13th are the exceptions the naive rule gets wrong.
+    if (n % 100 >= 11 && n % 100 <= 13) return '${n}th';
+    return switch (n % 10) {
+      1 => '${n}st',
+      2 => '${n}nd',
+      3 => '${n}rd',
+      _ => '${n}th',
+    };
+  }
+
+  static AttemptLeaderboard? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final board = AttemptLeaderboard(
+      rank: (raw['rank'] as num?)?.toInt(),
+      totalParticipants: (raw['totalParticipants'] as num?)?.toInt(),
+      bestScore: raw['bestScore'] as num?,
+    );
+    return board.isEmpty ? null : board;
+  }
+}
+
 /// One row of quiz or test history.
 class AttemptSummary {
   final int id;
@@ -122,6 +169,9 @@ class AttemptSummary {
   final String? status;
   final DateTime? at;
 
+  /// Only on test attempts, and only once the attempt has finished.
+  final AttemptLeaderboard? leaderboard;
+
   const AttemptSummary({
     required this.id,
     required this.title,
@@ -130,6 +180,7 @@ class AttemptSummary {
     this.reportedPercent,
     this.status,
     this.at,
+    this.leaderboard,
   });
 
   /// Percentage for this attempt.
@@ -223,6 +274,7 @@ class AttemptSummary {
       status: (json['status'] ?? json['state'])?.toString(),
       at: DateTime.tryParse(
           '${json['attemptedAt'] ?? json['submittedAt'] ?? json['completedAt'] ?? json['createdAt'] ?? ''}'),
+      leaderboard: AttemptLeaderboard.fromJson(json['leaderboard']),
     );
   }
 }

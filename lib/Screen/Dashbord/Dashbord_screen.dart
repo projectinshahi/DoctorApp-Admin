@@ -1,21 +1,30 @@
 import 'package:admin_drapp/Screen/Dashbord/student_list_screen.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/const/responsive_const.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../provider/admin_student_provider.dart';
-import '../QuestionBank/question_bank_screen.dart';
+import '../QuestionBank/course_quiz_screen.dart';
 import '../../provider/course_get_provider.dart';
 import 'course_list_screen.dart';
 import 'dashboard_overview.dart';
-import 'coming_soon_view.dart';
+import 'comment_moderation_screen.dart';
 import 'lesson_video_screen.dart';
 import 'subscription_plans_screen.dart';
 import '../Test/test_list_screen.dart';
+import '../Login/Login_screen.dart';
+import '../../core/const/local_storegae.dart';
+import '../../services/admin_account_service.dart';
+import '../../services/admin_comment_service.dart';
+import 'admin_settings_screen.dart';
 
 // ── Simple data models ──────────────────────────────────────────────
 
+/// A sidebar entry. [badgeOf] returns the red-dot count for this item, read
+/// from the dashboard's state so a nav item can carry live news.
 class NavItem {
   final IconData icon;
   final String label;
@@ -44,7 +53,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       NavItem(Icons.menu_book_outlined, "Courses"),
       NavItem(Icons.videocam_outlined, "Videos"),
       NavItem(Icons.help_outline_rounded, "Question Bank"),
-      NavItem(Icons.assignment_outlined, "Quizzes"),
       NavItem(Icons.fact_check_outlined, "Tests"),
     ]),
     NavSection("people", [
@@ -54,9 +62,68 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     NavSection("business", [
       NavItem(Icons.credit_card_outlined, "Subscriptions"),
     ]),
+    NavSection("account", [
+      NavItem(Icons.settings_outlined, "Settings"),
+    ]),
   ];
 
+  /// New or reported comments the moderator has not seen. Drives the red dot.
+  int _reportedComments = 0;
+  Timer? _badgeTimer;
+
+  Future<void> _refreshBadge() async {
+    final count = await AdminCommentService().unseenCount();
+    if (!mounted || count == null) return;
+    if (count != _reportedComments) {
+      setState(() => _reportedComments = count);
+    }
+  }
+
+  @override
+  void dispose() {
+    _badgeTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshBadge();
+    // Slow on purpose: a moderation queue is not a chat, and a tighter poll
+    // would cost a request a minute for a number that rarely moves.
+    _badgeTimer =
+        Timer.periodic(const Duration(minutes: 2), (_) => _refreshBadge());
+    // Checked at boot so a dead session sends the admin to login before they
+    // lose work in a half-filled form. Only 401/403 end the session - a
+    // network failure must not.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final result = await AdminAccountService().getMe();
+      if (mounted && result.mustReauthenticate) {
+        _endSession(reason: result.errorMessage);
+      }
+    });
+  }
+
+  /// Clears the stored token and returns to login.
+  void _endSession({String? reason}) async {
+    await AdminLocalStorage.clearAdminData();
+    if (!mounted) return;
+
+    if (reason != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(reason), backgroundColor: LmsColors.error),
+      );
+    }
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const AdminLoginScreen()),
+      (route) => false,
+    );
+  }
+
   void _selectNav(String label) {
+    // Leaving Comments usually means something was just acted on.
+    if (_selected == "Comments" && label != "Comments") _refreshBadge();
     setState(() => _selected = label);
     if (LmsResponsive.isMobile(context) && Navigator.canPop(context)) {
       Navigator.pop(context);
@@ -89,6 +156,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 selected: _selected,
                 sections: _sections,
                 onSelect: _selectNav,
+                badges: {"Comments": _reportedComments},
               ),
             )
           : null,
@@ -99,6 +167,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               selected: _selected,
               sections: _sections,
               onSelect: _selectNav,
+              badges: {"Comments": _reportedComments},
             ),
           Expanded(
             child: Column(
@@ -123,9 +192,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ),
                     child: _TopBar(title: _selected),
                   ),
-                if (_selected == "Question Bank")
-                  const Expanded(child: QuestionBankScreen())
-                else
                   Expanded(
                     child: SingleChildScrollView(
                       padding: EdgeInsets.fromLTRB(
@@ -167,6 +233,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           create: (_) => CourseListGetProvider(),
           child: const LessonVideoScreen(),
         );
+      case "Settings":
+        return AdminSettingsScreen(onSessionEnded: _endSession);
       case "Subscriptions":
         return ChangeNotifierProvider(
           create: (_) => CourseListGetProvider(),
@@ -178,33 +246,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           child: const TestListScreen(),
         );
       case "Question Bank":
-        return const ComingSoonView(
-          title: 'Question Bank',
-          icon: Icons.help_outline_rounded,
-          description:
-              'Browsing, creating and editing questions is being rebuilt and '
-              'will land here.',
-          insteadHint:
-              'Quiz lessons still pick their questions in the lesson sheet, '
-              'under Courses.',
-        );
-      case "Quizzes":
-        return const ComingSoonView(
-          title: 'Quizzes',
-          icon: Icons.assignment_outlined,
-          description:
-              'The quiz health report - orphaned, underfilled and healthy '
-              'quizzes - is being rebuilt and will land here.',
-          insteadHint:
-              'A lesson\'s quiz and its questions are on the lesson detail '
-              'screen today.',
+        return ChangeNotifierProvider(
+          create: (_) => CourseListGetProvider(),
+          child: const CourseQuizScreen(),
         );
       case "Comments":
-        return const ComingSoonView(
-          title: 'Comments',
-          icon: Icons.chat_bubble_outline_rounded,
-          description: 'Student comments and moderation will land here.',
-        );
+        return const CommentModerationScreen();
       case "Students":
         return ChangeNotifierProvider(
           create: (_) => AdminStudentProvider(),
@@ -229,10 +276,14 @@ class _Sidebar extends StatelessWidget {
   final List<NavSection> sections;
   final ValueChanged<String> onSelect;
 
+  /// Red-dot counts by nav label. Absent or zero means no dot.
+  final Map<String, int> badges;
+
   const _Sidebar({
     required this.selected,
     required this.sections,
     required this.onSelect,
+    this.badges = const {},
   });
 
   @override
@@ -293,6 +344,7 @@ class _Sidebar extends StatelessWidget {
                   _NavTile(
                     item: item,
                     isSelected: item.label == selected,
+                    badge: badges[item.label] ?? 0,
                     onTap: () => onSelect(item.label),
                   ),
                 const SizedBox(height: 18),
@@ -310,10 +362,15 @@ class _NavTile extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
 
+  /// Zero draws nothing - an empty queue should look empty, not like a zero
+  /// someone still has to read.
+  final int badge;
+
   const _NavTile({
     required this.item,
     required this.isSelected,
     required this.onTap,
+    this.badge = 0,
   });
 
   @override
@@ -333,10 +390,44 @@ class _NavTile extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Icon(
-                  item.icon,
-                  size: 19,
-                  color: isSelected ? LmsColors.primary : LmsColors.textGrey,
+                // The dot sits on the icon, the way an unread badge does -
+                // it is news about the section, not part of its name.
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(
+                      item.icon,
+                      size: 19,
+                      color:
+                          isSelected ? LmsColors.primary : LmsColors.textGrey,
+                    ),
+                    if (badge > 0)
+                      Positioned(
+                        right: -7,
+                        top: -6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          constraints: const BoxConstraints(minWidth: 16),
+                          decoration: BoxDecoration(
+                            color: LmsColors.error,
+                            borderRadius: BorderRadius.circular(9),
+                            border:
+                                Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          child: Text(
+                            badge > 99 ? '99+' : '$badge',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(width: 12),
                 Text(

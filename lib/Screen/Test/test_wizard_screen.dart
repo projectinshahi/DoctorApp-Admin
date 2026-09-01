@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../core/theam/theam_dart.dart';
@@ -12,7 +13,11 @@ import '../../widget/shimmer_loading.dart';
 import 'test_error_table.dart';
 
 /// The four steps, in the order the API enforces.
-enum TestStep { shell, upload, review, publish }
+/// Details -> Images -> CSV -> Review -> Publish.
+///
+/// Images come before the CSV because a CSV row carries an image URL, not the
+/// file: the URL has to exist before the row referencing it is imported.
+enum TestStep { shell, images, upload, review, publish }
 
 /// Creating a test, as a wizard rather than a form.
 ///
@@ -20,10 +25,11 @@ enum TestStep { shell, upload, review, publish }
 /// to be seen by a human before any student can sit the paper. A single form
 /// with one submit button would collapse that gap.
 ///
-///   1 shell    POST   /api/admin/courses/:courseId/tests   (courseTypeId in body)
-///   2 upload   POST   /api/admin/tests/:id/questions/upload
-///   3 review   GET    /api/admin/tests/:id/preview
-///   4 publish  POST   /api/admin/tests/:id/publish
+///   1 details  POST   /api/admin/courses/:courseId/tests   (courseTypeId in body)
+///   2 images   POST   /api/admin/tests/:id/images          (optional)
+///   3 upload   POST   /api/admin/tests/:id/questions/upload
+///   4 review   GET    /api/admin/tests/:id/preview
+///   5 publish  POST   /api/admin/tests/:id/publish
 class TestWizardScreen extends StatefulWidget {
   final int courseId;
   final String courseTitle;
@@ -71,9 +77,17 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
   final _marksCorrectController = TextEditingController(text: '1');
   final _marksIncorrectController = TextEditingController(text: '0');
   final _durationController = TextEditingController();
+  final _instructionsController = TextEditingController();
 
   bool _isBusy = false;
   String? _error;
+
+  // ── Step 2 image state ───────────────────────────────────────────
+  List<({Uint8List bytes, String filename})> _pickedImages = const [];
+  List<String> _uploadedImageUrls = const [];
+  List<TestUploadIssue> _imageFailures = const [];
+  bool _isUploadingImages = false;
+  String? _imageError;
 
   /// Null means "All exam types" - the whole course sees the paper.
   int? _courseTypeId;
@@ -93,6 +107,17 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
     _test = widget.existing;
     _step = widget.startAt;
     _courseTypeId = widget.existing?.courseTypeId ?? widget.initialCourseTypeId;
+
+    final existing = widget.existing;
+    if (existing != null) {
+      _titleController.text = existing.title;
+      _descriptionController.text = existing.description ?? '';
+      _instructionsController.text = existing.instructions ?? '';
+      _totalQuestionsController.text = '${existing.totalQuestions}';
+      _marksCorrectController.text = '${existing.marksCorrect}';
+      _marksIncorrectController.text = '${existing.marksIncorrect}';
+      _durationController.text = existing.durationMinutes?.toString() ?? '';
+    }
     if (_step == TestStep.review) _loadPreview();
   }
 
@@ -104,6 +129,7 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
     _marksCorrectController.dispose();
     _marksIncorrectController.dispose();
     _durationController.dispose();
+    _instructionsController.dispose();
     super.dispose();
   }
 
@@ -135,6 +161,7 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
         id: 0,
         courseId: widget.courseId,
         courseTypeId: _courseTypeId,
+        instructions: _instructionsController.text.trim(),
         title: _titleController.text.trim(),
         description: _descriptionController.text.trim(),
         totalQuestions: int.parse(_totalQuestionsController.text.trim()),
@@ -151,7 +178,7 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
     if (result.isSuccess && result.test != null) {
       setState(() {
         _test = result.test;
-        _step = TestStep.upload;
+        _step = TestStep.images;
       });
     } else {
       setState(() => _error = result.errorMessage);
@@ -336,6 +363,7 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
           ],
           switch (_step) {
             TestStep.shell => _shellForm(),
+            TestStep.images => _imagesStep(),
             TestStep.upload => _uploadStep(),
             TestStep.review => _reviewStep(),
             TestStep.publish => _publishedStep(),
@@ -367,6 +395,13 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
                     (v ?? '').trim().isEmpty ? 'A title is required' : null),
             const SizedBox(height: 14),
             _field(_descriptionController, 'Description (optional)', maxLines: 2),
+            const SizedBox(height: 14),
+
+            // Always editable, even on a locked paper: it changes nothing
+            // already marked.
+            _field(_instructionsController, 'Instructions for students (optional)',
+                hint: 'Read every question carefully. No going back.',
+                maxLines: 3),
             const SizedBox(height: 14),
 
             _examTypeDropdown(),
@@ -512,7 +547,196 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
     );
   }
 
-  // ── Step 2 UI ────────────────────────────────────────────────────
+  // ── Step 2: images ───────────────────────────────────────────────
+
+  /// SVG rides along with the raster formats. Diagrams and anatomical figures
+  /// are drawn as vectors, and rasterising them costs legibility once a
+  /// student zooms in on a phone.
+  static const _imageExtensions = ['jpg', 'jpeg', 'png', 'webp', 'svg'];
+
+  Future<void> _pickImages() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: _imageExtensions,
+      allowMultiple: true,
+      withData: true, // web has no file path to read from
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      _imageError = null;
+      _pickedImages = [
+        for (final file in picked.files)
+          if (file.bytes != null) (bytes: file.bytes!, filename: file.name),
+      ];
+    });
+  }
+
+  Future<void> _uploadImagesNow() async {
+    final test = _test;
+    if (test == null || _pickedImages.isEmpty) return;
+
+    setState(() {
+      _isUploadingImages = true;
+      _imageError = null;
+    });
+
+    final result =
+        await _service.uploadImages(testId: test.id, files: _pickedImages);
+
+    if (!mounted) return;
+    setState(() {
+      _isUploadingImages = false;
+      if (result.isSuccess) {
+        // Partial success is normal: the files that landed are kept and the
+        // refusals are listed, rather than the batch being called a failure.
+        _uploadedImageUrls = [..._uploadedImageUrls, ...result.urls];
+        _imageFailures = result.failures;
+        _pickedImages = const [];
+      } else {
+        _imageError = result.errorMessage;
+      }
+    });
+  }
+
+  Future<void> _copy(String text, String confirmation) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(confirmation)));
+  }
+
+  Widget _imagesStep() {
+    final locked = !(_test?.canEditContent ?? true);
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 760),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _StepTitle(
+            'Upload images — optional',
+            'Only if your questions use them. Images go up before the CSV '
+                'because a CSV row carries an image URL, not the file itself, '
+                'so the URL has to exist before the row that names it.',
+          ),
+          const SizedBox(height: 18),
+
+          if (locked)
+            _UploadBanner(
+              color: LmsColors.textGrey,
+              icon: Icons.lock_outline_rounded,
+              title: 'Images are locked',
+              body: _test?.contentLockReason,
+            )
+          else ...[
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _isUploadingImages ? null : _pickImages,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: LmsColors.textDark,
+                    side: const BorderSide(color: LmsColors.border),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 15),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(11)),
+                  ),
+                  icon: const Icon(Icons.add_photo_alternate_outlined, size: 17),
+                  label: const Text('Choose images',
+                      style: TextStyle(
+                          fontSize: 12.5, fontWeight: FontWeight.w700)),
+                ),
+                if (_pickedImages.isNotEmpty) ...[
+                  const SizedBox(width: 10),
+                  _PrimaryButton(
+                    label: 'Upload ${_pickedImages.length}',
+                    busy: _isUploadingImages,
+                    onPressed: _uploadImagesNow,
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            const _Hint('JPEG, PNG, WebP or SVG. Up to 200 files, 2 MB each.'),
+
+            if (_pickedImages.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(_pickedImages.map((f) => f.filename).join(', '),
+                  style: const TextStyle(
+                      fontSize: 11.5, color: LmsColors.textGrey)),
+            ],
+          ],
+
+          if (_imageError != null) ...[
+            const SizedBox(height: 16),
+            _UploadBanner(
+              color: LmsColors.error,
+              icon: Icons.error_outline_rounded,
+              title: 'Upload failed',
+              body: _imageError,
+            ),
+          ],
+
+          if (_uploadedImageUrls.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            _UploadBanner(
+              color: _imageFailures.isEmpty
+                  ? LmsColors.success
+                  : const Color(0xFFB8860B),
+              icon: _imageFailures.isEmpty
+                  ? Icons.check_circle_rounded
+                  : Icons.warning_amber_rounded,
+              title: '${_uploadedImageUrls.length} image'
+                  '${_uploadedImageUrls.length == 1 ? '' : 's'} uploaded'
+                  '${_imageFailures.isEmpty ? '' : ', ${_imageFailures.length} refused'}',
+              body: _imageFailures.isEmpty
+                  ? 'Copy a URL into your CSV\'s image column.'
+                  : 'The rest went through — only the files listed below were '
+                      'refused.',
+            ),
+            const SizedBox(height: 12),
+            // Each URL is copyable, because that URL is the only way an image
+            // reaches a question: the CSV column takes the address, not the
+            // file. A thumbnail with no way to copy its URL is a dead end.
+            for (final url in _uploadedImageUrls) _UploadedImageRow(url: url),
+            if (_uploadedImageUrls.length > 1) ...[
+              const SizedBox(height: 6),
+              TextButton.icon(
+                onPressed: () => _copy(
+                  _uploadedImageUrls.join('\n'),
+                  '${_uploadedImageUrls.length} URLs copied',
+                ),
+                icon: const Icon(Icons.copy_all_rounded, size: 16),
+                label: const Text('Copy all URLs',
+                    style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ],
+
+          if (_imageFailures.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            TestErrorTable(issues: _imageFailures, nothingWasSaved: false),
+          ],
+
+          const SizedBox(height: 26),
+          Row(
+            children: [
+              _PrimaryButton(
+                label: _uploadedImageUrls.isEmpty
+                    ? 'Skip — no images'
+                    : 'Continue to the CSV',
+                busy: false,
+                onPressed: () => setState(() => _step = TestStep.upload),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Step 3 UI ────────────────────────────────────────────────────
 
   Widget _uploadStep() {
     final result = _uploadResult;
@@ -620,8 +844,12 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
           child: Text(
             'Header row, then one row per question:\n\n'
             'question_text,option_a,option_b,option_c,option_d,'
-            'correct_option,explanation\n\n'
+            'correct_option,explanation,section,question_image_url\n\n'
             'correct_option must be A, B, C or D.\n\n'
+            'section groups questions into named parts of the paper. '
+            'Optional - leave it blank for an ungrouped test.\n\n'
+            'question_image_url takes a URL from the Images step, not a file. '
+            'Upload the image first, then paste its URL here.\n\n'
             'Wrap any field containing a comma in double quotes:\n'
             '"A 54-year-old, previously well, presents with...",...\n\n'
             'To include a double quote inside a quoted field, double it: "".',
@@ -714,15 +942,35 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
                 icon: Icons.publish_rounded,
               ),
               const SizedBox(width: 12),
-              if (!(test?.readyToPublish ?? false))
-                const Expanded(
-                  child: Text(
-                    'The server has not marked this test ready to publish.',
-                    style: TextStyle(fontSize: 12, color: LmsColors.textGrey),
-                  ),
+              // Always available. Everything up to here is already saved on
+              // the server, so the wizard must have an exit that keeps it -
+              // otherwise an incomplete paper leaves the admin stuck on a
+              // disabled Publish with nowhere to go but the back arrow.
+              OutlinedButton.icon(
+                onPressed: _isBusy ? null : () => Navigator.pop(context, true),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: LmsColors.textDark,
+                  side: const BorderSide(color: LmsColors.border),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11)),
                 ),
+                icon: const Icon(Icons.save_outlined, size: 17),
+                label: const Text('Save as draft',
+                    style: TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w700)),
+              ),
             ],
           ),
+          if (!(test?.readyToPublish ?? false)) ...[
+            const SizedBox(height: 10),
+            const _Hint(
+              'The server has not marked this test ready to publish yet. '
+              'Save it as a draft — nothing is lost, and you can publish from '
+              'the test list once the paper is complete.',
+            ),
+          ],
         ],
       ),
     );
@@ -823,7 +1071,7 @@ class _StepRail extends StatelessWidget {
   final TestStep current;
   const _StepRail({required this.current});
 
-  static const _labels = ['Create', 'Upload', 'Review', 'Publish'];
+  static const _labels = ['Details', 'Images', 'CSV', 'Review', 'Publish'];
 
   @override
   Widget build(BuildContext context) {
@@ -1252,6 +1500,125 @@ class _UploadBanner extends StatelessWidget {
                           fontSize: 12.5, height: 1.35, color: color)),
                 ],
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A preview of an uploaded image, rendered from its hosted URL.
+///
+/// SVG goes through flutter_svg, which does not execute script — and the file
+/// is served from the image host, a different origin from this app, so a
+/// script inside one has nothing here to reach. Both facts have to stay true:
+/// inlining one of these files into the page would break the second, which is
+/// the only reason accepting SVG at all is safe.
+class _HostedThumb extends StatelessWidget {
+  final String url;
+
+  const _HostedThumb({required this.url});
+
+  bool get _isSvg =>
+      Uri.tryParse(url)?.path.toLowerCase().endsWith('.svg') ?? false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: url,
+      child: Container(
+        width: 84,
+        height: 84,
+        decoration: BoxDecoration(
+          color: LmsColors.bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: LmsColors.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: _isSvg
+            ? SvgPicture.network(
+                url,
+                fit: BoxFit.contain,
+                placeholderBuilder: (_) => const Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            : Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const Center(
+                  child: Icon(Icons.broken_image_outlined,
+                      size: 18, color: LmsColors.textGrey),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+/// One uploaded image: preview, its URL, and a way to copy it.
+class _UploadedImageRow extends StatelessWidget {
+  final String url;
+
+  const _UploadedImageRow({required this.url});
+
+  /// Last path segment, which is what the admin recognises from their folder.
+  String get _filename {
+    final segments = Uri.tryParse(url)?.pathSegments ?? const [];
+    return segments.isEmpty ? url : segments.last;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: LmsColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: LmsColors.border),
+      ),
+      child: Row(
+        children: [
+          _HostedThumb(url: url),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_filename,
+                    style: const TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w700),
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 3),
+                Text(url,
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        color: LmsColors.textGrey),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'Copy this URL for the CSV\'s image column',
+            child: IconButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: url));
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Image URL copied')),
+                );
+              },
+              icon: const Icon(Icons.copy_rounded, size: 18),
+              color: LmsColors.primary,
             ),
           ),
         ],

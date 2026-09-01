@@ -223,6 +223,46 @@ void main() {
     expect(nested.recentQuizAttempts.single.percent, 50);
   });
 
+  group('test leaderboard on a student attempt', () {
+    test('reads rank, participants and best score', () {
+      final a = AttemptSummary.fromJson({
+        'id': 1,
+        'testTitle': 'Grand Test 1',
+        'score': 2,
+        'total': 10,
+        'leaderboard': {'rank': 3, 'totalParticipants': 24, 'bestScore': 2},
+      });
+
+      expect(a.leaderboard, isNotNull);
+      expect(a.leaderboard!.placeLabel, '3rd of 24');
+      expect(a.leaderboard!.bestScore, 2);
+    });
+
+    test('is null while the attempt is still running', () {
+      // Absent is information - the ranking does not exist yet.
+      final a = AttemptSummary.fromJson({'id': 2, 'title': 'Live'});
+      expect(a.leaderboard, isNull);
+
+      final empty = AttemptSummary.fromJson({'id': 3, 'leaderboard': {}});
+      expect(empty.leaderboard, isNull);
+    });
+
+    test('ordinals handle the teens', () {
+      String place(int rank) => AttemptLeaderboard(rank: rank).placeLabel!;
+
+      expect(place(1), '1st');
+      expect(place(2), '2nd');
+      expect(place(3), '3rd');
+      expect(place(4), '4th');
+      // The naive rule gets these wrong.
+      expect(place(11), '11th');
+      expect(place(12), '12th');
+      expect(place(13), '13th');
+      expect(place(21), '21st');
+      expect(place(112), '112th');
+    });
+  });
+
   test('survives a payload with no progress at all', () {
     final bare = StudentDetail.fromJson({'id': 1});
     expect(bare.progress.lessons.isEmpty, isTrue);

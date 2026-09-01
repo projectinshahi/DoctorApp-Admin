@@ -143,6 +143,12 @@ class AttemptRow extends StatelessWidget {
                         fontSize: 11, color: LmsColors.textGrey),
                   ),
                 ],
+                // Absent while the attempt is still running, so its absence
+                // is information rather than a gap.
+                if (attempt.leaderboard != null) ...[
+                  const SizedBox(height: 6),
+                  LeaderboardChip(board: attempt.leaderboard!),
+                ],
               ],
             ),
           ),
@@ -448,6 +454,70 @@ class LessonItemRow extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Where this student placed on the test's leaderboard.
+///
+/// The same figure for every retake of the same paper - a leaderboard ranks
+/// students, not attempts - so it is shown once per row rather than implied to
+/// be the rank of this particular sitting.
+class LeaderboardChip extends StatelessWidget {
+  final AttemptLeaderboard board;
+
+  const LeaderboardChip({super.key, required this.board});
+
+  /// Top three earn the highlight; everyone else stays neutral so the colour
+  /// still means something.
+  Color get _color {
+    final rank = board.rank;
+    if (rank == null) return LmsColors.textGrey;
+    return switch (rank) {
+      1 => const Color(0xFFB8860B),
+      2 => const Color(0xFF8A8A96),
+      3 => const Color(0xFFA9714B),
+      _ => LmsColors.primary,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final place = board.placeLabel;
+    final best = board.bestScore;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: _color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: _color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            board.rank == 1
+                ? Icons.emoji_events_rounded
+                : Icons.leaderboard_outlined,
+            size: 12,
+            color: _color,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            [
+              if (place != null) place,
+              if (best != null)
+                'best ${best % 1 == 0 ? best.toInt() : best}',
+            ].join(' · '),
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w800,
+              color: _color,
+            ),
+          ),
         ],
       ),
     );

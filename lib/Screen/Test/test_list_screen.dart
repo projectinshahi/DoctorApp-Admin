@@ -9,6 +9,9 @@ import '../../provider/course_get_provider.dart';
 import '../../services/admin_test_service.dart';
 import '../../services/course_details_service.dart';
 import '../../widget/shimmer_loading.dart';
+import 'edit_test_sheet.dart';
+import 'test_attempts_tab.dart';
+import 'test_results_screen.dart';
 import 'test_wizard_screen.dart';
 
 /// Tests for one exam type, with each row driven purely by the server's flags.
@@ -28,7 +31,12 @@ class TestListScreen extends StatefulWidget {
   State<TestListScreen> createState() => _TestListScreenState();
 }
 
-class _TestListScreenState extends State<TestListScreen> {
+class _TestListScreenState extends State<TestListScreen>
+    with SingleTickerProviderStateMixin {
+  /// Tests and attempts are separate tabs, not one scroll: building a paper
+  /// and reading who sat it are different jobs, done at different times.
+  late final TabController _tabs = TabController(length: 2, vsync: this);
+
   final _service = AdminTestService();
   final _courseDetails = CourseDetailsService();
 
@@ -54,6 +62,12 @@ class _TestListScreenState extends State<TestListScreen> {
         _selectCourse(provider.courses.first.id);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
   }
 
   Future<void> _selectCourse(int courseId) async {
@@ -197,56 +211,25 @@ class _TestListScreenState extends State<TestListScreen> {
   /// The server refuses with 409 once anyone has sat the paper; the button is
   /// disabled from [AdminTest.canDelete] first so an admin does not reach a
   /// confirm dialog for something that cannot happen.
+  /// A plain delete first, always.
+  ///
+  /// The 409 that comes back when attempts exist is the confirmation step, not
+  /// an error: it names the counts and says a forced delete is possible. The
+  /// flag is never sent on a first click - there is no undo, no soft delete
+  /// and no archive.
   Future<void> _confirmDelete(AdminTest test) async {
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Delete "${test.title}"?'),
-        content: Text(
-          'This permanently removes the test, its ${test.questionCount} '
-          'question${test.questionCount == 1 ? '' : 's'} and every image '
-          'uploaded with it.\n\n'
-          'Unpublishing hides it from students and can be undone. Deleting '
-          'cannot.',
-          style: const TextStyle(fontSize: 13.5, height: 1.45),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'delete'),
-            style: TextButton.styleFrom(foregroundColor: LmsColors.error),
-            child: const Text('Delete anyway'),
-          ),
-          // Primary, and last so it sits where the eye lands.
-          if (test.isPublished)
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, 'unpublish'),
-              style: FilledButton.styleFrom(backgroundColor: LmsColors.primary),
-              child: const Text('Unpublish instead'),
-            ),
-        ],
-      ),
-    );
-
-    if (choice == null || !mounted) return;
-
-    if (choice == 'unpublish') {
-      await _togglePublish(test);
-      return;
-    }
-
     final result = await _service.deleteTest(test.id);
     if (!mounted) return;
 
     if (result.isSuccess) {
       await _loadTests();
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(result.message)));
-    } else {
+      return;
+    }
+
+    if (!result.needsConfirmation) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result.message),
@@ -254,10 +237,75 @@ class _TestListScreenState extends State<TestListScreen> {
           duration: const Duration(seconds: 6),
         ),
       );
-      // A 409 means the server knows about attempts this list did not - reload
-      // so the delete button disables itself.
-      if (result.attemptCount != null) await _loadTests();
+      await _loadTests();
+      return;
     }
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (_) => _DeleteTestDialog(test: test, refusal: result),
+    );
+    if (choice == null || !mounted) return;
+
+    if (choice == 'unpublish') {
+      final unpublished = await _service.unpublish(test.id);
+      if (!mounted) return;
+      await _loadTests();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(unpublished.isSuccess
+              ? '"${test.title}" is no longer visible to students. Every '
+                  'result is kept.'
+              : unpublished.errorMessage ?? 'Could not unpublish'),
+          backgroundColor: unpublished.isSuccess ? null : LmsColors.error,
+        ),
+      );
+      return;
+    }
+
+    final forced = await _service.deleteTest(test.id, deleteAttempts: true);
+    if (!mounted) return;
+    await _loadTests();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(forced.message),
+        backgroundColor: forced.isSuccess ? null : LmsColors.error,
+        duration: const Duration(seconds: 7),
+      ),
+    );
+  }
+
+  Future<void> _openEdit(AdminTest test) async {
+    final outcome = await showDialog<String>(
+      context: context,
+      builder: (_) => EditTestSheet(test: test, courseTypes: _types),
+    );
+    if (outcome == null || !mounted) return;
+
+    await _loadTests();
+    if (!mounted) return;
+
+    // The server drops a published test to draft on any edit. Said out loud -
+    // a live paper going dark unnoticed is a support ticket.
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(outcome == 'unpublished'
+            ? 'Saved — "${test.title}" is back to draft and no longer visible '
+                'to students. Publish it again when you are ready.'
+            : 'Saved.'),
+        duration: Duration(seconds: outcome == 'unpublished' ? 7 : 3),
+      ),
+    );
+  }
+
+  void _openResults(AdminTest test) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => TestResultsScreen(test: test)),
+    );
   }
 
   @override
@@ -307,7 +355,41 @@ class _TestListScreenState extends State<TestListScreen> {
             const SizedBox(height: 14),
             _typePicker(),
           ],
+          const SizedBox(height: 18),
+
+          TabBar(
+            controller: _tabs,
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            labelColor: LmsColors.primary,
+            unselectedLabelColor: LmsColors.textGrey,
+            indicatorColor: LmsColors.primary,
+            labelStyle:
+                const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+            tabs: const [
+              Tab(text: 'TESTS'),
+              Tab(text: 'ATTEMPTED'),
+            ],
+          ),
           const SizedBox(height: 20),
+
+          AnimatedBuilder(
+            animation: _tabs,
+            builder: (context, _) => _tabs.index == 1
+                ? TestAttemptsTab(tests: _tests)
+                : _testsTab(),
+          ),
+
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _testsTab() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
 
           if (_courseId == null)
             const SizedBox.shrink()
@@ -336,11 +418,11 @@ class _TestListScreenState extends State<TestListScreen> {
                 onTogglePublish: () => _togglePublish(test),
                 onClear: () => _confirmClear(test),
                 onDelete: () => _confirmDelete(test),
+                onResults: () => _openResults(test),
+                onEdit: () => _openEdit(test),
+                onQuestions: () => _openResults(test),
               ),
-
-          const SizedBox(height: 24),
         ],
-      ),
     );
   }
 
@@ -443,6 +525,9 @@ class _TestRow extends StatelessWidget {
   final VoidCallback onTogglePublish;
   final VoidCallback onClear;
   final VoidCallback onDelete;
+  final VoidCallback onResults;
+  final VoidCallback onEdit;
+  final VoidCallback onQuestions;
 
   const _TestRow({
     required this.test,
@@ -451,6 +536,9 @@ class _TestRow extends StatelessWidget {
     required this.onTogglePublish,
     required this.onClear,
     required this.onDelete,
+    required this.onResults,
+    required this.onEdit,
+    required this.onQuestions,
   });
 
   ({String label, Color color}) get _badge => switch (test.state) {
@@ -526,6 +614,10 @@ class _TestRow extends StatelessWidget {
                     : Icons.groups_outlined,
                 test.scopeLabel,
               ),
+              if (test.attemptCount > 0)
+                _Meta(Icons.people_outline_rounded,
+                    '${test.attemptCount} attempt'
+                    '${test.attemptCount == 1 ? '' : 's'}'),
               _Meta(Icons.check_circle_outline_rounded, '+${test.marksCorrect}'),
               if (test.marksIncorrect != 0)
                 _Meta(Icons.remove_circle_outline_rounded, '${test.marksIncorrect}'),
@@ -535,8 +627,21 @@ class _TestRow extends StatelessWidget {
           ),
           const SizedBox(height: 14),
 
-          Row(
+          Wrap(
+            spacing: 0,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              // Always available: name and instructions stay editable
+              // whatever the locks say.
+              _Action('Edit', Icons.edit_outlined, onEdit),
+              const SizedBox(width: 6),
+              _Action(
+                locked ? 'View questions' : 'Questions',
+                Icons.list_alt_rounded,
+                onQuestions,
+              ),
+              const SizedBox(width: 6),
               if (locked)
                 // The reason lives on hover so the admin learns it before
                 // clicking, rather than discovering it as a 409.
@@ -548,7 +653,7 @@ class _TestRow extends StatelessWidget {
                       Icon(Icons.lock_outline_rounded,
                           size: 15, color: LmsColors.textGrey),
                       SizedBox(width: 7),
-                      Text('Editing disabled',
+                      Text('Questions locked',
                           style: TextStyle(
                               fontSize: 12, color: LmsColors.textGrey)),
                     ],
@@ -576,7 +681,11 @@ class _TestRow extends StatelessWidget {
                       danger: true),
                 ],
               ],
-              const Spacer(),
+              if (test.attemptCount > 0) ...[
+                const SizedBox(width: 6),
+                _Action('Results', Icons.leaderboard_outlined, onResults),
+              ],
+              const SizedBox(width: 6),
               // Disabled rather than hidden, with the reason on hover: an
               // admin should learn why the paper is undeletable before
               // clicking, not from a 409 afterwards.
@@ -716,4 +825,109 @@ class _Notice extends StatelessWidget {
           ],
         ),
       );
+}
+
+/// The confirmation the server's 409 asked for.
+///
+/// Unpublish is primary because it is what is wanted nine times out of ten:
+/// it hides the paper and keeps every result. Delete sits behind a
+/// destructive-styled button that will not enable until the test name is typed
+/// out - there is no undo behind it.
+class _DeleteTestDialog extends StatefulWidget {
+  final AdminTest test;
+  final TestDeleteResult refusal;
+
+  const _DeleteTestDialog({required this.test, required this.refusal});
+
+  @override
+  State<_DeleteTestDialog> createState() => _DeleteTestDialogState();
+}
+
+class _DeleteTestDialogState extends State<_DeleteTestDialog> {
+  final _typed = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _typed.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _typed.dispose();
+    super.dispose();
+  }
+
+  bool get _nameMatches =>
+      _typed.text.trim() == widget.test.title.trim();
+
+  @override
+  Widget build(BuildContext context) {
+    final attempts = widget.refusal.attemptCount ?? 0;
+    final submitted = widget.refusal.submittedCount;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('"${widget.test.title}" has been sat'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$attempts student attempt${attempts == 1 ? '' : 's'}'
+              '${submitted == null ? '' : ', $submitted of them completed'}.',
+              style: const TextStyle(fontSize: 13.5, height: 1.45),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Unpublishing hides the test from students and keeps every '
+              'result. Deleting erases the results permanently — there is no '
+              'undo and no archive.',
+              style: TextStyle(fontSize: 12.5, height: 1.45,
+                  color: LmsColors.textGrey),
+            ),
+            const SizedBox(height: 18),
+            Text('To delete anyway, type the test name:',
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w700,
+                    color: LmsColors.error)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _typed,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: widget.test.title,
+                hintStyle: const TextStyle(
+                    fontSize: 12.5, color: LmsColors.textGrey),
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: LmsColors.border),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: _nameMatches ? () => Navigator.pop(context, 'delete') : null,
+          style: TextButton.styleFrom(foregroundColor: LmsColors.error),
+          child: const Text('Delete test and results'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, 'unpublish'),
+          style: FilledButton.styleFrom(backgroundColor: LmsColors.primary),
+          child: const Text('Unpublish instead'),
+        ),
+      ],
+    );
+  }
 }
