@@ -249,3 +249,95 @@ List<String> examTagsOf(List<Quiz> quizzes) {
       .toList()
     ..sort();
 }
+
+/// The questions pinned to a quiz, plus the mode that decides whether an order
+/// exists at all.
+class QuizQuestionSet {
+  final int quizId;
+
+  /// 'manual' - the admin pinned exactly these, in this order.
+  /// 'filter' - drawn from subject and topic at serve time.
+  final String mode;
+
+  final int totalQuestions;
+  final List<QuizSetQuestion> questions;
+
+  const QuizQuestionSet({
+    required this.quizId,
+    required this.mode,
+    this.totalQuestions = 0,
+    this.questions = const [],
+  });
+
+  /// Only a manual quiz has an order to arrange. A filter quiz samples fresh
+  /// per student, so "question 3" is a different question for each of them -
+  /// dragging one would look like it worked and change nothing anyone sees.
+  bool get isManual => mode.toLowerCase() == 'manual';
+
+  List<int> get questionIds => questions.map((q) => q.id).toList();
+
+  factory QuizQuestionSet.fromJson(Map<String, dynamic> json) {
+    final raw = json['questions'];
+    return QuizQuestionSet(
+      quizId: (json['quizId'] as num?)?.toInt() ?? 0,
+      mode: (json['mode'] ?? 'filter') as String,
+      totalQuestions: (json['totalQuestions'] as num?)?.toInt() ?? 0,
+      questions: raw is List
+          ? raw
+              .whereType<Map<String, dynamic>>()
+              .map(QuizSetQuestion.fromJson)
+              .toList()
+          : const [],
+    );
+  }
+}
+
+/// One question in a quiz's pinned set.
+class QuizSetQuestion {
+  final int id;
+  final String questionText;
+
+  /// A question can be a figure alone, so this is not decoration - dropping it
+  /// here is why the list used to render "(image only)" over nothing.
+  final String? questionImageUrl;
+
+  final String? difficulty;
+
+  /// The server's own position. Rendered rather than the array index, which is
+  /// only the local guess and disagrees the moment a save fails.
+  final int? displayOrder;
+
+  final List<QuizOption> options;
+
+  const QuizSetQuestion({
+    required this.id,
+    required this.questionText,
+    this.questionImageUrl,
+    this.difficulty,
+    this.displayOrder,
+    this.options = const [],
+  });
+
+  factory QuizSetQuestion.fromJson(Map<String, dynamic> json) {
+    final raw = json['options'];
+    return QuizSetQuestion(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      questionText:
+          (json['questionText'] ?? json['question_text'] ?? '') as String,
+      questionImageUrl: (json['questionImageUrl'] ??
+          json['question_image_url'] ??
+          json['imageUrl']) as String?,
+      difficulty: json['difficulty'] as String?,
+      displayOrder: (json['displayOrder'] as num?)?.toInt(),
+      options: raw is List
+          ? raw
+              .whereType<Map<String, dynamic>>()
+              .map(QuizOption.fromJson)
+              .toList()
+          : const [],
+    );
+  }
+
+  bool get hasImage => (questionImageUrl ?? '').trim().isNotEmpty;
+}
+

@@ -104,6 +104,31 @@ Columns — only `correct_option` is required:
 `option_a`…`option_d` · `option_a_image_url`…`option_d_image_url` ·
 `correct_option` · `explanation` · `subject` · `topic`
 
+### Images: paste a URL, or just the file name
+
+An image cell takes **either** a full Cloudinary URL **or** the name of a file
+uploaded to this test:
+
+```csv
+question_order,question_text,question_image_filename,option_a,...
+1,What pattern is shown?,sample_q1.svg,Pattern A,...
+2,Identify the trend.,SAMPLE_Q2.SVG,Rising,...
+```
+
+The name wins in practice. An admin uploads a folder of `q1.svg`…`q200.svg`;
+pasting 200 Cloudinary URLs into a spreadsheet by hand is the step that
+produces the typos this validation exists to catch.
+
+- `question_image_filename` is an accepted alias for `question_image_url`, and
+  the same for every `option_*_image_*`. Either header, either kind of value.
+- Matching is **case-insensitive** — `Q1.SVG` finds `q1.svg`.
+- A name that matches nothing uploaded is a **blocking** error:
+  `"sample_q9.svg" is not a URL and no image with that name was uploaded to this test`
+- Nothing uploaded at all says so instead, rather than "not a valid URL",
+  which would send an admin hunting for a typo that is not there.
+- Two uploads sharing a name **block** rather than guess — picking one silently
+  would put the wrong picture on a question.
+
 Template: [test-questions-template.csv](test-questions-template.csv)
 
 ### Three rules the upload UI must reflect
@@ -111,8 +136,12 @@ Template: [test-questions-template.csv](test-questions-template.csv)
 **`errors` carries a `severity`.** Entries without it block; `severity:
 "warning"` do not and the row still imports. A URL outside this test's uploads
 is a warning, not a block — it is usually a typo, but it is also how an
-existing CDN asset is referenced. Render the two differently or an admin sees
-"6 rows invalid" for a file that imported fine.
+existing CDN asset is referenced.
+
+Those foreign-URL warnings are **grouped by host**, one entry carrying a `rows`
+array of every affected line, rather than one entry per row. Render warnings
+apart from errors: a response saying `Imported 10 question(s)` succeeded,
+however many warnings came with it.
 
 **Text OR image.** A stem can be an image alone — an ECG is often the whole
 question — and so can an option. Only *neither* is an error.
@@ -120,6 +149,52 @@ question — and so can an option. Only *neither* is an error.
 **Nothing is written unless the whole file validates.** All blocking errors
 come back at once; fixing a 200-row file one error per upload would take all
 day.
+
+### A count mismatch no longer blocks
+
+```json
+{ "row": 1, "field": "header", "severity": "warning",
+  "message": "This test expects 5 questions and the file has 10. It will import, but the test cannot be published until the two match." }
+```
+
+The file imports. **Publish is the real gate** and still refuses with
+`Cannot publish: this test expects 5 questions but has 10.` — so the paper
+cannot quietly serve the wrong number either way, and the admin is not sent to
+edit the test before they are allowed to look at their own file.
+
+Offer a one-tap fix beside that warning: `PATCH /api/admin/tests/:id`
+`{ "totalQuestions": 10 }`, which is allowed while nobody has attempted it.
+
+### Importing before the images are uploaded
+
+A filename that is not among this test's uploads **blocks** by default:
+
+```json
+{ "row": 2, "field": "question_image_url",
+  "message": "No images have been uploaded to this test yet, so \"sample_q1.svg\" cannot be resolved. Upload the images first." }
+```
+
+That is right for the normal path — a question whose diagram is missing is a
+broken question, and importing one silently is how a student meets it in an
+exam. **Images before CSV** stays the recommended order.
+
+For an admin building the paper text-first:
+
+```
+POST /api/admin/tests/:testId/questions/upload?allowMissingImages=true
+```
+
+Those rows import with `questionImageUrl: null`, and each one comes back as a
+warning naming the question to fix:
+
+> …Imported without an image — add it to question 3 before publishing.
+
+Verified on a 10-row file with images on alternating rows: 5 blocking errors
+without the flag, 10 questions imported with it, and after uploading the images
+a plain re-import resolved every one with no errors at all.
+
+Put it behind a checkbox on the upload screen — "Import now, add images
+later" — not on by default.
 
 `DELETE /api/admin/tests/:testId/questions` clears the paper and unpublishes
 it.

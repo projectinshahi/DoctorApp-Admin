@@ -25,10 +25,22 @@ class TestErrorTable extends StatelessWidget {
     this.nothingWasSaved = true,
   });
 
+  /// The server tells an admin to "upload the images first", which this panel
+  /// has no button for. Left alone that sends them looking for one, so the two
+  /// routes that do exist are named underneath it.
+  static bool _isImageField(TestUploadIssue i) =>
+      i.field.toLowerCase().contains('image');
+
   @override
   Widget build(BuildContext context) {
     final errors = issues.where((i) => !i.isWarning).toList();
     final warnings = issues.where((i) => i.isWarning).toList();
+    final imageHint = errors.any(_isImageField)
+        ? '\n\nA file name only resolves against images uploaded to this test. '
+            'Either paste the full https://... address instead, or tick '
+            '"Import now, add images later" to bring these rows in without '
+            'their pictures.'
+        : '';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -41,7 +53,8 @@ class TestErrorTable extends StatelessWidget {
                 'could not be imported',
             body: nothingWasSaved
                 ? 'Nothing was saved — fix these lines and re-upload the file.'
-                : null,
+                    '$imageHint'
+                : (imageHint.isEmpty ? null : imageHint.trimLeft()),
           ),
           const SizedBox(height: 12),
           _Table(issues: errors, color: LmsColors.error),

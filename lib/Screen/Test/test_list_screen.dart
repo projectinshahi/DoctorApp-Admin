@@ -35,7 +35,7 @@ class _TestListScreenState extends State<TestListScreen>
     with SingleTickerProviderStateMixin {
   /// Tests and attempts are separate tabs, not one scroll: building a paper
   /// and reading who sat it are different jobs, done at different times.
-  late final TabController _tabs = TabController(length: 2, vsync: this);
+  late final TabController _tabs = TabController(length: 3, vsync: this);
 
   final _service = AdminTestService();
   final _courseDetails = CourseDetailsService();
@@ -138,6 +138,8 @@ class _TestListScreenState extends State<TestListScreen>
 
   Future<void> _openWizard({AdminTest? test, TestStep startAt = TestStep.shell}) async {
     if (_courseId == null) return;
+    // Creating needs an exam type; reopening an existing test does not.
+    if (test == null && _courseTypeId == null) return;
     final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
@@ -333,7 +335,9 @@ class _TestListScreenState extends State<TestListScreen>
                   ],
                 ),
               ),
-              if (_courseId != null)
+              // A test belongs to an exam, so there is nothing to create
+              // until one is chosen.
+              if (_courseTypeId != null)
                 FilledButton.icon(
                   onPressed: () => _openWizard(),
                   style: FilledButton.styleFrom(
@@ -367,7 +371,8 @@ class _TestListScreenState extends State<TestListScreen>
             labelStyle:
                 const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
             tabs: const [
-              Tab(text: 'TESTS'),
+              Tab(text: 'CREATED'),
+              Tab(text: 'DRAFTS'),
               Tab(text: 'ATTEMPTED'),
             ],
           ),
@@ -375,9 +380,11 @@ class _TestListScreenState extends State<TestListScreen>
 
           AnimatedBuilder(
             animation: _tabs,
-            builder: (context, _) => _tabs.index == 1
-                ? TestAttemptsTab(tests: _tests)
-                : _testsTab(),
+            builder: (context, _) => switch (_tabs.index) {
+              1 => _testsTab(drafts: true),
+              2 => TestAttemptsTab(tests: _tests),
+              _ => _testsTab(drafts: false),
+            },
           ),
 
           const SizedBox(height: 24),
@@ -386,44 +393,80 @@ class _TestListScreenState extends State<TestListScreen>
     );
   }
 
-  Widget _testsTab() {
+  /// One tab body for both lists.
+  ///
+  /// Split on isPublished - what the server says is live - rather than on what
+  /// the wizard started. A paper only leaves Drafts when students can see it.
+  Widget _testsTab({required bool drafts}) {
+    final tests =
+        _tests.where((t) => t.isPublished != drafts).toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-
-          if (_courseId == null)
-            const SizedBox.shrink()
-          else if (_isLoading)
-            const ShimmerListSkeleton(rowCount: 3, padding: EdgeInsets.zero)
-          else if (_error != null)
-            _Notice(
-              icon: Icons.error_outline_rounded,
-              color: LmsColors.error,
-              text: _error!,
-              action: TextButton(onPressed: _loadTests, child: const Text('Retry')),
-            )
-          else if (_tests.isEmpty)
-            _Notice(
-              icon: Icons.assignment_outlined,
-              text: _courseTypeId == null
-                  ? 'No tests on this course yet.'
-                  : 'No tests on this exam type yet.',
-            )
-          else
-            for (final test in _tests)
-              _TestRow(
-                test: test,
-                onUpload: () => _openWizard(test: test, startAt: TestStep.upload),
-                onReview: () => _openWizard(test: test, startAt: TestStep.review),
-                onTogglePublish: () => _togglePublish(test),
-                onClear: () => _confirmClear(test),
-                onDelete: () => _confirmDelete(test),
-                onResults: () => _openResults(test),
-                onEdit: () => _openEdit(test),
-                onQuestions: () => _openResults(test),
-              ),
+        if (_courseId == null)
+          const SizedBox.shrink()
+        else if (_isLoading)
+          const ShimmerListSkeleton(rowCount: 3, padding: EdgeInsets.zero)
+        else if (_error != null)
+          _Notice(
+            icon: Icons.error_outline_rounded,
+            color: LmsColors.error,
+            text: _error!,
+            action:
+                TextButton(onPressed: _loadTests, child: const Text('Retry')),
+          )
+        else if (tests.isEmpty)
+          _Notice(
+            icon: drafts
+                ? Icons.edit_note_rounded
+                : Icons.assignment_turned_in_outlined,
+            color: drafts ? LmsColors.primary : LmsColors.success,
+            text: drafts
+                ? _courseTypeId == null
+                    ? 'No drafts. Pick an exam type above to start one.'
+                    : 'No drafts on this exam type — everything here is live.'
+                : 'Nothing is published on this exam type yet. '
+                    'Finish a draft to put it in front of students.',
+          )
+        else ...[
+          if (drafts) ...[
+            const Text(
+              'Tap a draft to pick up where it stopped — the wizard opens at '
+              'the step it still needs.',
+              style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
+            ),
+            const SizedBox(height: 12),
+          ],
+          for (final test in tests)
+            _TestRow(
+              test: test,
+              // Only a draft resumes: a published paper has no step left, and
+              // tapping it would reopen a wizard with nothing to do.
+              onTap: drafts ? () => _resume(test) : null,
+              onUpload: () => _openWizard(test: test, startAt: TestStep.upload),
+              onReview: () => _openWizard(test: test, startAt: TestStep.review),
+              onTogglePublish: () => _togglePublish(test),
+              onClear: () => _confirmClear(test),
+              onDelete: () => _confirmDelete(test),
+              onResults: () => _openResults(test),
+              onEdit: () => _openEdit(test),
+              onQuestions: () => _openResults(test),
+            ),
         ],
+      ],
     );
+  }
+
+  /// Reopens a draft at the step it has not finished.
+  ///
+  /// Read off the test's own numbers rather than remembered anywhere: an
+  /// empty paper needs its CSV, a partial or complete one needs reviewing
+  /// before anyone publishes it.
+  void _resume(AdminTest test) {
+    final step =
+        test.questionCount == 0 ? TestStep.upload : TestStep.review;
+    _openWizard(test: test, startAt: step);
   }
 
   Widget _coursePicker(CourseListGetProvider provider) {
@@ -500,8 +543,9 @@ class _TestListScreenState extends State<TestListScreen>
       spacing: 8,
       runSpacing: 8,
       children: [
-        // "All types" is a filter, not an absence: it also brings back the
-        // papers that were deliberately left unscoped.
+        // A view filter only. New papers are always written for one exam, so
+        // this brings back every type's tests plus any older row that was
+        // saved without one.
         _Chip(
           title: 'All types',
           selected: _courseTypeId == null,
@@ -529,6 +573,11 @@ class _TestRow extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onQuestions;
 
+  /// Set on drafts only: tapping the row resumes the wizard. A published paper
+  /// has no step left, so it stays inert rather than reopening a wizard with
+  /// nothing to do.
+  final VoidCallback? onTap;
+
   const _TestRow({
     required this.test,
     required this.onUpload,
@@ -539,6 +588,7 @@ class _TestRow extends StatelessWidget {
     required this.onResults,
     required this.onEdit,
     required this.onQuestions,
+    this.onTap,
   });
 
   ({String label, Color color}) get _badge => switch (test.state) {
@@ -558,13 +608,17 @@ class _TestRow extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: LmsColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: LmsColors.border),
       ),
-      child: Column(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -665,17 +719,50 @@ class _TestRow extends StatelessWidget {
                 else ...[
                   _Action('Review & publish', Icons.fact_check_outlined, onReview),
                   const SizedBox(width: 6),
-                  _Action(
-                    test.isPublished ? 'Unpublish' : 'Publish',
-                    test.isPublished
-                        ? Icons.unpublished_outlined
-                        : Icons.publish_rounded,
-                    // readyToPublish gates it directly - no speculative
-                    // publish, no 409 as the "not ready" signal.
-                    test.isPublished || test.readyToPublish
-                        ? onTogglePublish
-                        : null,
-                  ),
+                  // Publish is a filled commitment; unpublish is an outline
+                  // you can take back. Rendering both as the same flat action
+                  // made a live paper one indistinguishable click from dark.
+                  if (test.isPublished)
+                    OutlinedButton.icon(
+                      onPressed: onTogglePublish,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: LmsColors.textGrey,
+                        side: const BorderSide(color: LmsColors.border),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 13, vertical: 9),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9)),
+                      ),
+                      icon: const Icon(Icons.visibility_off_outlined, size: 15),
+                      label: const Text('Unpublish',
+                          style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w700)),
+                    )
+                  else
+                    Tooltip(
+                      message: test.readyToPublish
+                          ? 'Make this paper live to students'
+                          : 'The server has not marked this test ready — the '
+                              'paper is not complete yet.',
+                      child: FilledButton.icon(
+                        // readyToPublish gates it directly - no speculative
+                        // publish, no 409 as the "not ready" signal.
+                        onPressed:
+                            test.readyToPublish ? onTogglePublish : null,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: LmsColors.success,
+                          disabledBackgroundColor: LmsColors.border,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(9)),
+                        ),
+                        icon: const Icon(Icons.rocket_launch_rounded, size: 15),
+                        label: const Text('Publish',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.w800)),
+                      ),
+                    ),
                   const SizedBox(width: 6),
                   _Action('Clear', Icons.delete_outline_rounded, onClear,
                       danger: true),
@@ -704,6 +791,8 @@ class _TestRow extends StatelessWidget {
             ],
           ),
         ],
+      ),
+        ),
       ),
     );
   }
@@ -931,3 +1020,4 @@ class _DeleteTestDialogState extends State<_DeleteTestDialog> {
     );
   }
 }
+

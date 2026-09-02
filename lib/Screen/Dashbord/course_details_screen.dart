@@ -419,6 +419,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                       else
                         ...course.courseTypes.map(
                               (courseType) => CourseTypeCard(
+                                onRefresh: _refresh,
                             courseType: courseType,
                             courseTitle: course.title,
                             readOnly: widget.readOnly,

@@ -1,5 +1,10 @@
+import 'dart:async';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../services/question_image_service.dart';
+import '../../widget/question_image_view.dart';
 
 import '../../core/theam/theam_dart.dart';
 import '../../models/question_bank_model.dart';
@@ -80,6 +85,19 @@ class _AddEditQuestionSheetState extends State<_AddEditQuestionSheet> {
 
   late final TextEditingController _questionTextController;
   late final TextEditingController _questionImageUrlController;
+
+  final _imageService = QuestionImageService();
+
+  /// publicId of every file uploaded from this form, by the field that holds
+  /// it. The URL alone cannot delete a file, so losing this leaves the asset
+  /// unreachable rather than merely unreferenced.
+  ///
+  /// Key: null for the stem, otherwise the option index.
+  final Map<int?, String> _uploadedPublicIds = {};
+
+  /// Which field is mid-upload, so only that one shows a spinner.
+  int? _uploadingFor;
+  bool _isUploading = false;
   late final TextEditingController _explanationController;
   late final TextEditingController _marksCorrectController;
   late final TextEditingController _marksIncorrectController;
@@ -136,6 +154,11 @@ class _AddEditQuestionSheetState extends State<_AddEditQuestionSheet> {
   @override
   void dispose() {
     _questionTextController.dispose();
+    // Whatever is still here was never saved - the save path clears the map
+    // precisely so the files it kept are not deleted from under it. This is
+    // the only reliable cleanup point: the sheet can be dismissed by a drag,
+    // a back gesture or a barrier tap, none of which run a Cancel handler.
+    _discardUploads();
     _questionImageUrlController.dispose();
     _explanationController.dispose();
     _marksCorrectController.dispose();
@@ -228,6 +251,80 @@ class _AddEditQuestionSheetState extends State<_AddEditQuestionSheet> {
     if (value.endsWith(',')) _addTag(value);
   }
 
+  // ── Images ─────────────────────────────────────────────────────────
+
+  /// Uploads a file and puts the returned URL in [controller].
+  ///
+  /// [slot] is null for the question stem, otherwise the option index - it
+  /// keys the publicId so the right file is deleted when a field is cleared.
+  Future<void> _pickImage(TextEditingController controller, int? slot) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: QuestionImageService.allowedExtensions,
+      withData: true, // web has no file path to read from
+    );
+    if (picked == null || picked.files.single.bytes == null || !mounted) return;
+
+    setState(() {
+      _isUploading = true;
+      _uploadingFor = slot;
+    });
+
+    final result = await _imageService.upload(
+      bytes: picked.files.single.bytes!,
+      filename: picked.files.single.name,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _isUploading = false;
+      _uploadingFor = null;
+    });
+
+    if (!result.isSuccess || result.image == null) {
+      _snack(result.errorMessage ?? 'Upload failed', isError: true);
+      return;
+    }
+
+    // Replacing an image leaves the old one orphaned unless it goes now.
+    final previous = _uploadedPublicIds[slot];
+    if (previous != null) unawaited(_imageService.delete(previous));
+
+    setState(() {
+      controller.text = result.image!.url;
+      _uploadedPublicIds[slot] = result.image!.publicId;
+    });
+  }
+
+  /// Clears the field and deletes the file behind it.
+  Future<void> _removeImage(TextEditingController controller, int? slot) async {
+    final publicId = _uploadedPublicIds.remove(slot);
+    setState(() => controller.clear());
+    // A pasted URL has no publicId - there is nothing of ours to delete.
+    if (publicId != null) unawaited(_imageService.delete(publicId));
+  }
+
+  /// Deletes everything uploaded from this form.
+  ///
+  /// The upload is not tied to a question, so a form abandoned after an upload
+  /// leaves a file nobody can find. Called on cancel, never on save.
+  void _discardUploads() {
+    for (final publicId in _uploadedPublicIds.values) {
+      unawaited(_imageService.delete(publicId));
+    }
+    _uploadedPublicIds.clear();
+  }
+
+  void _snack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? LmsColors.error : null,
+      ),
+    );
+  }
+
   // ── Save ───────────────────────────────────────────────────────────
 
   Future<void> _handleSave() async {
@@ -271,7 +368,12 @@ class _AddEditQuestionSheetState extends State<_AddEditQuestionSheet> {
         : await provider.createQuestion(draft);
 
     if (!mounted) return;
-    if (success) Navigator.pop(context, true);
+    if (success) {
+      // Saved: the files belong to the question now, so they must NOT be
+      // cleaned up on the way out.
+      _uploadedPublicIds.clear();
+      if (mounted) Navigator.pop(context, true);
+    }
   }
 
   // ── Styling (reuses LmsColors + the lesson sheet's field decoration) ──
@@ -353,22 +455,40 @@ class _AddEditQuestionSheetState extends State<_AddEditQuestionSheet> {
                   minLines: 2,
                   maxLines: 6,
                   decoration: _inputDecoration('e.g. Which chamber pumps blood to the lungs?'),
-                  validator: (value) => (value == null || value.trim().isEmpty)
-                      ? 'Question text is required'
-                      : null,
+                  // Nullable on purpose: "which slide shows..." is a valid
+                  // question whose content is entirely the image.
+                  validator: (value) =>
+                      (value == null || value.trim().isEmpty) &&
+                              _questionImageUrlController.text.trim().isEmpty
+                          ? 'Add question text or an image'
+                          : null,
                 ),
                 const SizedBox(height: 14),
-                const _FieldLabel('Image URL (optional)'),
+                const _FieldLabel('Image (optional)'),
                 const SizedBox(height: 6),
                 TextFormField(
                   controller: _questionImageUrlController,
                   keyboardType: TextInputType.url,
                   decoration: _inputDecoration(
-                    'https://example.com/diagram.png',
+                    'Upload a file, or paste a URL',
                     icon: Icons.image_outlined,
                   ),
                   validator: _validateOptionalUrl,
                 ),
+                const SizedBox(height: 8),
+                _ImageControls(
+                  busy: _isUploading && _uploadingFor == null,
+                  hasImage:
+                      _questionImageUrlController.text.trim().isNotEmpty,
+                  onPick: () => _pickImage(_questionImageUrlController, null),
+                  onRemove: () =>
+                      _removeImage(_questionImageUrlController, null),
+                ),
+                if (_questionImageUrlController.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  QuestionImageView(
+                      url: _questionImageUrlController.text.trim()),
+                ],
                 const SizedBox(height: 14),
                 const _FieldLabel('Subject'),
                 const SizedBox(height: 6),
@@ -494,6 +614,11 @@ class _AddEditQuestionSheetState extends State<_AddEditQuestionSheet> {
                         canRemove: _options.length > kMinOptions,
                         onMarkCorrect: () => _markCorrect(index),
                         onRemove: () => _removeOption(index),
+                        uploading: _isUploading && _uploadingFor == index,
+                        onPickImage: () =>
+                            _pickImage(draft.imageUrlController, index),
+                        onRemoveImage: () =>
+                            _removeImage(draft.imageUrlController, index),
                         textDecoration: _inputDecoration('Option ${index + 1}'),
                         imageDecoration: _inputDecoration(
                           'Option image URL (optional)',
@@ -620,6 +745,9 @@ class _OptionRow extends StatelessWidget {
   final int index;
   final _OptionDraft draft;
   final bool canRemove;
+  final bool uploading;
+  final VoidCallback onPickImage;
+  final VoidCallback onRemoveImage;
   final VoidCallback onMarkCorrect;
   final VoidCallback onRemove;
   final InputDecoration textDecoration;
@@ -630,6 +758,9 @@ class _OptionRow extends StatelessWidget {
     required this.index,
     required this.draft,
     required this.canRemove,
+    required this.uploading,
+    required this.onPickImage,
+    required this.onRemoveImage,
     required this.onMarkCorrect,
     required this.onRemove,
     required this.textDecoration,
@@ -679,6 +810,56 @@ class _OptionRow extends StatelessWidget {
                   decoration: imageDecoration,
                   validator: validateUrl,
                 ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    TextButton.icon(
+                      onPressed: uploading ? null : onPickImage,
+                      style: TextButton.styleFrom(
+                        foregroundColor: LmsColors.textGrey,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: uploading
+                          ? const SizedBox(
+                              width: 11,
+                              height: 11,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.upload_rounded, size: 13),
+                      label: Text(
+                          draft.imageUrlController.text.trim().isEmpty
+                              ? 'Upload'
+                              : 'Replace',
+                          style: const TextStyle(fontSize: 11)),
+                    ),
+                    if (draft.imageUrlController.text.trim().isNotEmpty)
+                      TextButton.icon(
+                        onPressed: uploading ? null : onRemoveImage,
+                        style: TextButton.styleFrom(
+                          foregroundColor: LmsColors.error,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: const Icon(Icons.close_rounded, size: 13),
+                        label: const Text('Remove',
+                            style: TextStyle(fontSize: 11)),
+                      ),
+                  ],
+                ),
+                if (draft.imageUrlController.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  // The failure state is quiet everywhere now, so a compact
+                  // thumbnail no longer needs to opt out of it.
+                  QuestionImageView(
+                    url: draft.imageUrlController.text.trim(),
+                    maxHeight: 90,
+                  ),
+                ],
               ],
             ),
           ),
@@ -776,3 +957,60 @@ class _FieldLabel extends StatelessWidget {
     );
   }
 }
+
+/// Upload / replace / remove, under an image field.
+class _ImageControls extends StatelessWidget {
+  final bool busy;
+  final bool hasImage;
+  final VoidCallback onPick;
+  final VoidCallback onRemove;
+
+  const _ImageControls({
+    required this.busy,
+    required this.hasImage,
+    required this.onPick,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        OutlinedButton.icon(
+          onPressed: busy ? null : onPick,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: LmsColors.textDark,
+            side: const BorderSide(color: LmsColors.border),
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+          ),
+          icon: busy
+              ? const SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.upload_rounded, size: 15),
+          label: Text(hasImage ? 'Replace image' : 'Upload image',
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+        ),
+        if (hasImage) ...[
+          const SizedBox(width: 8),
+          TextButton.icon(
+            onPressed: busy ? null : onRemove,
+            style: TextButton.styleFrom(foregroundColor: LmsColors.error),
+            icon: const Icon(Icons.delete_outline_rounded, size: 15),
+            label: const Text('Remove', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Text('JPEG, PNG, WebP or SVG · 2 MB',
+              style: TextStyle(fontSize: 10.5, color: LmsColors.textGrey)),
+        ),
+      ],
+    );
+  }
+}
+

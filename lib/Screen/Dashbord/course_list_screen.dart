@@ -89,12 +89,10 @@ class _CourseListScreenState extends State<CourseListScreen> {
                 },
               ),
             ),
-            ElevatedButton.icon(
+            ElevatedButton(
               onPressed: () {
                 setState(() => _showAddForm = !_showAddForm);
               },
-              icon: Icon(_showAddForm ? Icons.close : Icons.add),
-              label: Text(_showAddForm ? "Close" : "Add Course"),
               style: ElevatedButton.styleFrom(
                 backgroundColor: LmsColors.primary,
                 foregroundColor: Colors.white,
@@ -103,6 +101,11 @@ class _CourseListScreenState extends State<CourseListScreen> {
                 ),
                 padding:
                 const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              ),
+              child: Text(
+                _showAddForm ? "Close" : "Add course",
+                style: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w700),
               ),
             ),
           ],

@@ -125,7 +125,10 @@ class AdminTest {
   /// is served to every student on the course.
   bool get isScopedToType => courseTypeId != null;
 
-  String get scopeLabel => courseTypeTitle ?? 'All exam types';
+  /// Older rows may carry no exam type. New papers always do, so an unscoped
+  /// one is worth naming as the exception rather than dressing it up as a
+  /// deliberate course-wide scope.
+  String get scopeLabel => courseTypeTitle ?? 'No exam type';
 
   /// Delete cascades to questions, images AND attempts. Once anyone has sat
   /// the paper a plain delete is refused (409); it takes an explicit

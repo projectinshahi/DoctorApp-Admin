@@ -62,9 +62,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     NavSection("business", [
       NavItem(Icons.credit_card_outlined, "Subscriptions"),
     ]),
-    NavSection("account", [
-      NavItem(Icons.settings_outlined, "Settings"),
-    ]),
   ];
 
   /// New or reported comments the moderator has not seen. Drives the red dot.
@@ -119,6 +116,57 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       MaterialPageRoute(builder: (_) => const AdminLoginScreen()),
       (route) => false,
     );
+  }
+
+  Future<void> _onAccountAction(String action) async {
+    if (action == 'settings') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            backgroundColor: Colors.white,
+            appBar: AppBar(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.white,
+              elevation: 0,
+              foregroundColor: LmsColors.textDark,
+              title: const Text('Settings',
+                  style:
+                      TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            ),
+            body: Padding(
+              padding: const EdgeInsets.all(20),
+              child: AdminSettingsScreen(onSessionEnded: _endSession),
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Log out?'),
+        content: const Text(
+          'You will need your email and password to sign back in.',
+          style: TextStyle(fontSize: 13.5, height: 1.45),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: LmsColors.error),
+            child: const Text('Log out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) _endSession();
   }
 
   void _selectNav(String label) {
@@ -190,7 +238,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       vertical: 20,
                     ),
-                    child: _TopBar(title: _selected),
+                    child: _TopBar(
+                      title: _selected,
+                      onAccountAction: _onAccountAction,
+                    ),
                   ),
                   Expanded(
                     child: SingleChildScrollView(
@@ -233,8 +284,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           create: (_) => CourseListGetProvider(),
           child: const LessonVideoScreen(),
         );
-      case "Settings":
-        return AdminSettingsScreen(onSessionEnded: _endSession);
       case "Subscriptions":
         return ChangeNotifierProvider(
           create: (_) => CourseListGetProvider(),
@@ -450,8 +499,9 @@ class _NavTile extends StatelessWidget {
 // ── Top bar: title left, avatar right — pinned full-width above the
 // centered content, so it never visually drifts to the middle. ──────
 class _TopBar extends StatelessWidget {
+  final ValueChanged<String> onAccountAction;
   final String title;
-  const _TopBar({required this.title});
+  const _TopBar({required this.title, required this.onAccountAction});
 
   @override
   Widget build(BuildContext context) {
@@ -474,15 +524,51 @@ class _TopBar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        CircleAvatar(
-          radius: 20,
-          backgroundColor: LmsColors.border,
-          child: const Text(
-            "AD",
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: LmsColors.textDark,
+        // Settings and Log out live on the avatar rather than in the nav.
+        // Neither is a section of the app to browse - they are things you do
+        // to your own account, which is what this control already represents.
+        PopupMenuButton<String>(
+          tooltip: 'Account',
+          offset: const Offset(0, 48),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+          onSelected: onAccountAction,
+          itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'settings',
+              child: Row(
+                children: [
+                  Icon(Icons.settings_outlined,
+                      size: 17, color: LmsColors.textGrey),
+                  SizedBox(width: 10),
+                  Text('Account settings', style: TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+            const PopupMenuDivider(),
+            const PopupMenuItem(
+              value: 'logout',
+              child: Row(
+                children: [
+                  Icon(Icons.logout_rounded, size: 17, color: LmsColors.error),
+                  SizedBox(width: 10),
+                  Text('Log out',
+                      style:
+                          TextStyle(fontSize: 13, color: LmsColors.error)),
+                ],
+              ),
+            ),
+          ],
+          child: const CircleAvatar(
+            radius: 20,
+            backgroundColor: LmsColors.border,
+            child: Text(
+              "AD",
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: LmsColors.textDark,
+              ),
             ),
           ),
         ),

@@ -405,4 +405,53 @@ class LessonService {
       return LessonListResult.failure('Something went wrong: $e');
     }
   }
+
+  /// Rewrites a chapter's lesson order.
+  ///
+  /// PATCH /api/chapters/:chapterId/lessons/reorder  { lessonIds }
+  ///
+  /// The array IS the order - positions come from the index, so the caller
+  /// sends the list as it looks after the drop rather than computing a target
+  /// position. Every update runs in one transaction server-side, so a
+  /// half-applied reorder cannot happen.
+  ///
+  /// It must carry EVERY lesson in the chapter, not a filtered subset: a
+  /// videos-only list would renumber the notes and quizzes around it.
+  Future<LessonListResult> reorderLessons({
+    required int chapterId,
+    required List<int> lessonIds,
+  }) async {
+    final adminToken = await _getToken();
+    if (adminToken == null) {
+      return LessonListResult.failure('Session expired. Please log in again.');
+    }
+    if (lessonIds.isEmpty) {
+      return LessonListResult.failure('Nothing to reorder.');
+    }
+
+    final uri = Uri.parse('$baseUrl/api/chapters/$chapterId/lessons/reorder');
+
+    try {
+      final response = await http
+          .patch(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $adminToken',
+            },
+            body: jsonEncode({'lessonIds': lessonIds}),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      // The response carries the chapter in its new order, so the caller can
+      // replace its list from it instead of re-fetching.
+      return _parseListResponse(response, 'reorder the lessons');
+    } on http.ClientException {
+      return LessonListResult.failure('Network error. Please check your connection.');
+    } on FormatException {
+      return LessonListResult.failure('Unexpected response from server.');
+    } catch (e) {
+      return LessonListResult.failure('Something went wrong: $e');
+    }
+  }
 }

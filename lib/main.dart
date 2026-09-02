@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'Screen/Login/Login_screen.dart';
+import 'core/theam/theam_dart.dart';
 
 void main() {
   runApp(const MyApp());
@@ -45,6 +46,27 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: "dr.skm's academy",
         debugShowCheckedModeBanner: false,
+        // Material 3 tints every dialog and sheet with
+        // colorScheme.surfaceContainerHigh - a lilac-grey, not white. The panel
+        // is white everywhere else, so it is pinned here once rather than
+        // passing backgroundColor to each of the twenty-odd dialogs.
+        theme: ThemeData(
+          useMaterial3: true,
+          scaffoldBackgroundColor: LmsColors.bg,
+          dialogTheme: const DialogThemeData(
+            backgroundColor: LmsColors.surface,
+            surfaceTintColor: Colors.transparent,
+          ),
+          bottomSheetTheme: const BottomSheetThemeData(
+            backgroundColor: LmsColors.surface,
+            surfaceTintColor: Colors.transparent,
+          ),
+          popupMenuTheme: const PopupMenuThemeData(
+            color: LmsColors.surface,
+            surfaceTintColor: Colors.transparent,
+          ),
+          cardTheme: const CardThemeData(surfaceTintColor: Colors.transparent),
+        ),
         home: AdminLoginScreen(),
       ),
     );

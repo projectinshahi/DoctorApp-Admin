@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../models/admin_test_model.dart';
 import '../../services/admin_test_service.dart';
+import '../../widget/question_image_view.dart';
 import '../../widget/shimmer_loading.dart';
 import 'question_form_sheet.dart';
 
@@ -462,8 +463,11 @@ class _QuestionCard extends StatelessWidget {
                       ),
                     ),
                     if (question.hasImage) ...[
-                      const SizedBox(height: 4),
-                      const _Chip(Icons.image_outlined, 'Image'),
+                      const SizedBox(height: 8),
+                      // The figure IS the question for an ECG or a slide, so
+                      // it is drawn here rather than announced by a chip.
+                      QuestionImageView(
+                          url: question.questionImageUrl!, maxHeight: 220),
                     ],
                   ],
                 ),
@@ -495,27 +499,34 @@ class _QuestionCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      question.options[i].text.trim().isEmpty
-                          ? '${String.fromCharCode(65 + i)}. (image only)'
-                          : '${String.fromCharCode(65 + i)}. '
-                              '${question.options[i].text}',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.3,
-                        fontWeight:
-                            i == correct ? FontWeight.w700 : FontWeight.w400,
-                        color: i == correct
-                            ? LmsColors.success
-                            : LmsColors.textDark,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          question.options[i].text.trim().isEmpty
+                              ? '${String.fromCharCode(65 + i)}. (image only)'
+                              : '${String.fromCharCode(65 + i)}. '
+                                  '${question.options[i].text}',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.3,
+                            fontWeight: i == correct
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                            color: i == correct
+                                ? LmsColors.success
+                                : LmsColors.textDark,
+                          ),
+                        ),
+                        if (question.options[i].hasImage) ...[
+                          const SizedBox(height: 6),
+                          QuestionImageView(
+                              url: question.options[i].imageUrl!,
+                              maxHeight: 130),
+                        ],
+                      ],
                     ),
                   ),
-                  if (question.options[i].hasImage) ...[
-                    const SizedBox(width: 6),
-                    const Icon(Icons.image_outlined,
-                        size: 13, color: LmsColors.textGrey),
-                  ],
                 ],
               ),
             ),

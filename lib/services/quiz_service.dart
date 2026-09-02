@@ -19,6 +19,21 @@ class QuizResult {
       QuizResult._(isSuccess: false, errorMessage: message);
 }
 
+class QuizQuestionSetResult {
+  final bool isSuccess;
+  final QuizQuestionSet? set;
+  final String? errorMessage;
+
+  QuizQuestionSetResult._(
+      {required this.isSuccess, this.set, this.errorMessage});
+
+  factory QuizQuestionSetResult.success(QuizQuestionSet set) =>
+      QuizQuestionSetResult._(isSuccess: true, set: set);
+
+  factory QuizQuestionSetResult.failure(String message) =>
+      QuizQuestionSetResult._(isSuccess: false, errorMessage: message);
+}
+
 class QuizListResult {
   final bool isSuccess;
   final List<Quiz>? quizzes;
@@ -260,6 +275,81 @@ class QuizService {
       return QuizPreviewResult.failure('Unexpected response from server.');
     } catch (e) {
       return QuizPreviewResult.failure('Something went wrong: $e');
+    }
+  }
+
+  /// The questions pinned to a quiz, and which mode it is in.
+  ///
+  /// GET /api/admin/quizzes/:id/questions
+  ///
+  /// `mode` is the whole point: "manual" means the admin pinned exactly these,
+  /// in this order; "filter" means the quiz samples from its subject and topic
+  /// per student, so there is no order to arrange.
+  Future<QuizQuestionSetResult> getQuestionSet(int quizId) async {
+    final adminToken = await _getToken();
+    if (adminToken == null) {
+      return QuizQuestionSetResult.failure('Session expired. Please log in again.');
+    }
+
+    final uri = Uri.parse('$baseUrl/admin/quizzes/$quizId/questions');
+    _log('[QUIZ SET] GET $uri');
+
+    try {
+      final response =
+          await http.get(uri, headers: _headers(adminToken)).timeout(_timeout);
+      final decoded = _tryDecode(response.body);
+      _log('[QUIZ SET] status: ${response.statusCode}');
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        return QuizQuestionSetResult.success(QuizQuestionSet.fromJson(decoded));
+      }
+      return QuizQuestionSetResult.failure(
+          _messageFrom(decoded, response.statusCode, 'load the questions'));
+    } catch (e) {
+      return QuizQuestionSetResult.failure('Could not reach the server: $e');
+    }
+  }
+
+  /// Replaces the whole pinned set.
+  ///
+  /// PUT /api/admin/quizzes/:id/questions  { questionIds }
+  ///
+  /// The array IS the order - displayOrder comes from the index - and it is
+  /// also the membership: an id left out is removed, an id added is pinned.
+  /// One transaction, so the quiz never serves a mix of the old and new order.
+  ///
+  /// An EMPTY array switches the quiz back to filter mode. That is a mode
+  /// change, not an empty quiz, so callers must confirm it deliberately rather
+  /// than letting it happen when the last row is deleted.
+  Future<QuizQuestionSetResult> setQuestionSet({
+    required int quizId,
+    required List<int> questionIds,
+  }) async {
+    final adminToken = await _getToken();
+    if (adminToken == null) {
+      return QuizQuestionSetResult.failure('Session expired. Please log in again.');
+    }
+
+    final uri = Uri.parse('$baseUrl/admin/quizzes/$quizId/questions');
+    _log('[QUIZ SET] PUT $uri  order=$questionIds');
+
+    try {
+      final response = await http
+          .put(uri,
+              headers: _headers(adminToken),
+              body: jsonEncode({'questionIds': questionIds}))
+          .timeout(_timeout);
+
+      final decoded = _tryDecode(response.body);
+      _log('[QUIZ SET] status: ${response.statusCode}');
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        return QuizQuestionSetResult.success(QuizQuestionSet.fromJson(decoded));
+      }
+      return QuizQuestionSetResult.failure(
+          _messageFrom(decoded, response.statusCode, 'save the order'));
+    } catch (e) {
+      return QuizQuestionSetResult.failure('Could not reach the server: $e');
     }
   }
 }

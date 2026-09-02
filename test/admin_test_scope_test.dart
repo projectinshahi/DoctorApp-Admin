@@ -24,7 +24,7 @@ void main() {
     expect(test.scopeLabel, 'DHA');
   });
 
-  test('a null course type is the whole course, not a missing value', () {
+  test('an unscoped row is named as the exception it now is', () {
     final test = AdminTest.fromJson({
       'id': 2,
       'name': 'Open paper',
@@ -34,9 +34,12 @@ void main() {
       'questionCount': 10,
     });
 
+    // New papers always carry an exam type - the form refuses to submit
+    // without one - so a null scope means an older row, not a deliberate
+    // course-wide choice.
     expect(test.courseTypeId, isNull);
     expect(test.isScopedToType, isFalse);
-    expect(test.scopeLabel, 'All exam types');
+    expect(test.scopeLabel, 'No exam type');
   });
 
   test('courseTypeId is sent even when null', () {

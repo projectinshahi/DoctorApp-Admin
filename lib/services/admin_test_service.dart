@@ -66,39 +66,6 @@ class TestUploadResult {
   bool get hasWarnings => warnings.isNotEmpty;
 }
 
-/// Images upload with partial success: some files land, others are named in
-/// `errors`. That is normal, not a failure, so both halves come back.
-class TestImageResult {
-  final bool isSuccess;
-
-  /// Hosted URLs, in upload order. Previews render from these, never from the
-  /// local bytes - a local preview would show a file the server may not hold.
-  final List<String> urls;
-
-  /// Files the server refused, by name.
-  final List<TestUploadIssue> failures;
-
-  final String? errorMessage;
-
-  const TestImageResult._({
-    required this.isSuccess,
-    this.urls = const [],
-    this.failures = const [],
-    this.errorMessage,
-  });
-
-  factory TestImageResult.success(
-    List<String> urls, {
-    List<TestUploadIssue> failures = const [],
-  }) =>
-      TestImageResult._(isSuccess: true, urls: urls, failures: failures);
-
-  factory TestImageResult.failure(String message) =>
-      TestImageResult._(isSuccess: false, errorMessage: message);
-
-  bool get isPartial => urls.isNotEmpty && failures.isNotEmpty;
-}
-
 class TestAttemptListResult {
   final bool isSuccess;
   final List<TestAttempt> attempts;
@@ -342,7 +309,6 @@ class TestListResult {
 /// UNPUB    POST   /api/admin/tests/:id/unpublish
 /// CLEAR    DELETE /api/admin/tests/:id/questions          (also unpublishes)
 /// UPDATE   PATCH  /api/admin/tests/:id
-/// IMAGES   POST   /api/admin/tests/:id/images            (multipart, "images")
 /// Q-ADD    POST   /api/admin/tests/:id/questions
 /// Q-EDIT   PATCH  /api/admin/tests/:id/questions/:qid
 /// Q-DEL    DELETE /api/admin/tests/:id/questions/:qid
@@ -489,10 +455,16 @@ class AdminTestService {
   /// before a human has looked at it.
   ///
   /// Sends bytes rather than a path: on web there is no file path to read.
+  /// [allowMissingImages] sends `?allowMissingImages=true`, which turns an
+  /// unresolvable image cell from a blocking error into a warning and imports
+  /// the row with a null image. OFF by default and never defaulted on: a
+  /// question whose diagram is missing is a broken question, and silently
+  /// importing 200 of them is worse than refusing the file.
   Future<TestUploadResult> uploadQuestions({
     required int testId,
     required Uint8List bytes,
     required String filename,
+    bool allowMissingImages = false,
   }) async {
     final token = await _token();
     if (token == null) {
@@ -502,7 +474,8 @@ class AdminTestService {
     try {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$_baseUrl/admin/tests/$testId/questions/upload'),
+        Uri.parse('$_baseUrl/admin/tests/$testId/questions/upload'
+            '${allowMissingImages ? '?allowMissingImages=true' : ''}'),
       )
         ..headers['Authorization'] = 'Bearer $token'
         ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
@@ -698,6 +671,38 @@ class AdminTestService {
   ///
   /// The payload is built by [AdminTest.toUpdatePayload], which drops the
   /// frozen fields, so a locked paper cannot be sent a change it will reject.
+  /// The one-tap fix beside a row-count warning.
+  ///
+  /// A bare PATCH rather than [updateTest], which would resend the whole
+  /// scoring block to change one number.
+  Future<TestResult> setTotalQuestions(int testId, int total) async {
+    final token = await _token();
+    if (token == null) {
+      return TestResult.failure('Session expired. Please log in again.');
+    }
+    try {
+      final response = await http
+          .patch(
+            Uri.parse('$_baseUrl/admin/tests/$testId'),
+            headers: _headers(token),
+            body: jsonEncode({'totalQuestions': total}),
+          )
+          .timeout(_timeout);
+      final decoded = _tryDecode(response.body);
+      if (response.statusCode == 200) {
+        return TestResult.success(
+          _testFrom(decoded),
+          unpublished:
+              decoded is Map && (decoded['unpublished'] as bool? ?? false),
+        );
+      }
+      return TestResult.failure(_messageFrom(
+          decoded, response.statusCode, 'change the question count'));
+    } catch (e) {
+      return TestResult.failure('Could not reach the server: $e');
+    }
+  }
+
   Future<TestResult> updateTest(AdminTest test) async {
     final token = await _token();
     if (token == null) {
@@ -732,80 +737,6 @@ class AdminTestService {
     } catch (e) {
       return TestResult.failure('Could not reach the server: $e');
     }
-  }
-
-  /// Uploads question images.
-  ///
-  /// These go up BEFORE the CSV, because a CSV row carries an image URL, not
-  /// the file - the URL has to exist before the row referencing it is
-  /// imported.
-  ///
-  /// Partial success is normal: some files land while others are refused, and
-  /// both halves are returned rather than the whole batch being called a
-  /// failure.
-  ///
-  /// SVG is accepted. It is only safe because the host serves it from a
-  /// different origin than this app, so a script inside one has nothing here
-  /// to reach, and because flutter_svg does not execute script. Render from
-  /// the returned URL - never inline the file into the page.
-  Future<TestImageResult> uploadImages({
-    required int testId,
-    required List<({Uint8List bytes, String filename})> files,
-  }) async {
-    final token = await _token();
-    if (token == null) {
-      return TestImageResult.failure('Session expired. Please log in again.');
-    }
-    if (files.isEmpty) return TestImageResult.success(const []);
-
-    try {
-      final request = http.MultipartRequest(
-        'POST',
-        Uri.parse('$_baseUrl/admin/tests/$testId/images'),
-      )..headers['Authorization'] = 'Bearer $token';
-
-      for (final file in files) {
-        request.files.add(http.MultipartFile.fromBytes(
-          'images',
-          file.bytes,
-          filename: file.filename,
-        ));
-      }
-
-      final streamed = await request.send().timeout(_uploadTimeout);
-      final response = await http.Response.fromStream(streamed);
-      final decoded = _tryDecode(response.body);
-
-      final isOk = (response.statusCode == 200 || response.statusCode == 201) &&
-          !(decoded is Map && decoded['error'] != null);
-
-      if (isOk) {
-        return TestImageResult.success(
-          _urlsFrom(decoded),
-          failures: _issuesFrom(decoded),
-        );
-      }
-      return TestImageResult.failure(
-          _messageFrom(decoded, response.statusCode, 'upload the images'));
-    } catch (e) {
-      return TestImageResult.failure('Could not reach the server: $e');
-    }
-  }
-
-  /// Pulls hosted URLs out of whatever shape the images response takes.
-  List<String> _urlsFrom(dynamic decoded) {
-    final raw = decoded is Map
-        ? (decoded['images'] ?? decoded['urls'] ?? decoded['uploaded'] ??
-            decoded['data'])
-        : decoded;
-    if (raw is! List) return const [];
-    return [
-      for (final item in raw)
-        if (item is String)
-          item
-        else if (item is Map)
-          '${item['url'] ?? item['secureUrl'] ?? item['secure_url'] ?? ''}',
-    ].where((u) => u.isNotEmpty).toList();
   }
 
   // ── One question at a time ───────────────────────────────────────

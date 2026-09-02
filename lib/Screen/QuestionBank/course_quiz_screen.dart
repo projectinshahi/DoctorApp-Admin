@@ -11,6 +11,7 @@ import '../../services/chapter_services.dart';
 import '../../services/course_details_service.dart';
 import '../../services/quiz_service.dart';
 import '../../widget/shimmer_loading.dart';
+import 'quiz_questions_screen.dart';
 
 /// Quizzes belonging to one course and one exam type.
 ///
@@ -210,7 +211,16 @@ class _CourseQuizScreenState extends State<CourseQuizScreen> {
               ),
               const SizedBox(height: 10),
               for (final quiz in group.quizzes)
-                _QuizRow(quiz: quiz, lessonTitle: _lessons[quiz.linkedLessonId]),
+                _QuizRow(
+                  quiz: quiz,
+                  lessonTitle: _lessons[quiz.linkedLessonId],
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => QuizQuestionsScreen(quiz: quiz),
+                    ),
+                  ),
+                ),
               const SizedBox(height: 18),
             ],
 
@@ -332,8 +342,13 @@ class _ChapterHeader extends StatelessWidget {
 class _QuizRow extends StatelessWidget {
   final Quiz quiz;
   final String? lessonTitle;
+  final VoidCallback onTap;
 
-  const _QuizRow({required this.quiz, required this.lessonTitle});
+  const _QuizRow({
+    required this.quiz,
+    required this.lessonTitle,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -341,7 +356,6 @@ class _QuizRow extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: LmsColors.surface,
         borderRadius: BorderRadius.circular(14),
@@ -351,7 +365,12 @@ class _QuizRow extends StatelessWidget {
               : LmsColors.border,
         ),
       ),
-      child: Column(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -388,6 +407,8 @@ class _QuizRow extends StatelessWidget {
             ],
           ),
         ],
+      ),
+        ),
       ),
     );
   }

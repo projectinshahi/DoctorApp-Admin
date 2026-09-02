@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'question_image_view.dart';
 
 import '../core/theam/theam_dart.dart';
 import '../models/quiz_model.dart';
@@ -341,13 +342,9 @@ class _QuestionCard extends StatelessWidget {
           ),
           if (question.questionImageUrl != null) ...[
             const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.network(
-                question.questionImageUrl!,
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
-              ),
-            ),
+            // Rendered the way the student app will render it, so a broken or
+            // wrongly-sized figure is caught here rather than in an exam.
+            QuestionImageView(url: question.questionImageUrl!),
           ],
           const SizedBox(height: 10),
 
@@ -405,13 +402,29 @@ class _OptionRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              option.optionText,
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: isCorrect ? FontWeight.w700 : FontWeight.w500,
-                color: isCorrect ? LmsColors.success : LmsColors.textDark,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // An option can be an image alone - "which slide shows..."
+                // has picture answers - so empty text is labelled, not blank.
+                Text(
+                  option.optionText.trim().isEmpty
+                      ? '(image only)'
+                      : option.optionText,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: isCorrect ? FontWeight.w700 : FontWeight.w500,
+                    color: option.optionText.trim().isEmpty
+                        ? LmsColors.textGrey
+                        : (isCorrect ? LmsColors.success : LmsColors.textDark),
+                  ),
+                ),
+                if ((option.optionImageUrl ?? '').trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  QuestionImageView(
+                      url: option.optionImageUrl!, maxHeight: 120),
+                ],
+              ],
             ),
           ),
         ],

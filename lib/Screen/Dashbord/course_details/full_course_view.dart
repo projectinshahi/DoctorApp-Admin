@@ -185,6 +185,10 @@ class CourseTypeCard extends StatelessWidget {
   /// then refuses.
   final bool readOnly;
 
+  /// Reloads the course after a reorder, so the chapter counts and the
+  /// student outline agree with what was just saved.
+  final VoidCallback? onRefresh;
+
   const CourseTypeCard({
     required this.courseType,
     required this.courseTitle,
@@ -200,6 +204,7 @@ class CourseTypeCard extends StatelessWidget {
     required this.onDeleteLesson,
     this.onEditLessonSubscription,
     this.readOnly = false,
+    this.onRefresh,
   });
 
   @override
@@ -358,6 +363,9 @@ class CourseTypeCard extends StatelessWidget {
                     readOnly || onEditLessonSubscription == null
                     ? null
                     : (lesson) => onEditLessonSubscription!(chapter, lesson),
+                // Refreshes the course so the chapter counts and the student
+                // outline agree with what was just saved.
+                onReordered: readOnly ? null : onRefresh,
               );
             }),
 
@@ -400,7 +408,7 @@ String letterLabel(int index) {
   return label;
 }
 
-class ChapterTile extends StatelessWidget {
+class ChapterTile extends StatefulWidget {
   final Chapter chapter;
   final int chapterNumber;
   final Map<int, String> planTitles;
@@ -411,7 +419,15 @@ class ChapterTile extends StatelessWidget {
   final void Function(Lesson lesson)? onDeleteLesson;
   final void Function(Lesson lesson)? onEditLessonSubscription;
 
+  /// Called after a successful reorder so the parent can refresh.
+  ///
+  /// Null also means "not reorderable" - the read-only dashboard view passes
+  /// nothing, and the drag handles disappear with it rather than offering a
+  /// gesture that would be refused.
+  final VoidCallback? onReordered;
+
   const ChapterTile({
+    super.key,
     required this.chapter,
     required this.chapterNumber,
     this.planTitles = const {},
@@ -421,13 +437,107 @@ class ChapterTile extends StatelessWidget {
     this.onEditLesson,
     this.onDeleteLesson,
     this.onEditLessonSubscription,
+    this.onReordered,
   });
 
   @override
+  State<ChapterTile> createState() => _ChapterTileState();
+}
+
+class _ChapterTileState extends State<ChapterTile> {
+  final _lessonService = LessonService();
+
+  /// The order being shown. Seeded from the chapter and updated on a drop, so
+  /// the row lands where it was dropped rather than after the round trip.
+  List<Lesson>? _order;
+  bool _isSaving = false;
+
+  Chapter get chapter => widget.chapter;
+  List<Lesson> get _lessons => _order ?? chapter.lessons;
+
+  @override
+  void didUpdateWidget(ChapterTile old) {
+    super.didUpdateWidget(old);
+
+    // Chapter has no value equality, so `old.chapter != widget.chapter` is an
+    // identity check that fires on any parent rebuild - including ones that
+    // pass the same stale data. Dropping the local order there would snap the
+    // list back to what the server said before the reorder. Only a genuinely
+    // different set of lessons is a reload worth deferring to.
+    final oldIds = old.chapter.lessons.map((l) => l.id).toList();
+    final newIds = widget.chapter.lessons.map((l) => l.id).toList();
+    if (!_sameIds(oldIds, newIds)) _order = null;
+  }
+
+  static bool _sameIds(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// Sends the whole chapter in its new order.
+  ///
+  /// The endpoint assigns positions from the array index and rejects any id
+  /// that is not in this chapter, so the list posted is exactly the list
+  /// shown - no target-position arithmetic here.
+  Future<void> _reorder(int oldIndex, int newIndex) async {
+    if (_isSaving) return;
+
+    final moved = [..._lessons];
+    // ReorderableListView reports the target as if the dragged row were still
+    // in place, so an index below it is one too high.
+    if (newIndex > oldIndex) newIndex -= 1;
+    moved.insert(newIndex, moved.removeAt(oldIndex));
+
+    final previous = _order;
+    setState(() {
+      _order = moved;
+      _isSaving = true;
+    });
+
+    final result = await _lessonService.reorderLessons(
+      chapterId: chapter.id,
+      lessonIds: moved.map((l) => l.id).toList(),
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _isSaving = false;
+      if (result.isSuccess) {
+        // The server returns the chapter in its saved order - trust that over
+        // the local guess, but fall back to it if the body was empty.
+        final saved = (result.data ?? const <Map<String, dynamic>>[])
+            .map(Lesson.fromJson)
+            .toList();
+        _order = saved.isEmpty ? moved : saved;
+      } else {
+        // Put it back: a row that stayed where it was dropped after a failed
+        // save is a lie about what students will see.
+        _order = previous;
+      }
+    });
+
+    if (result.isSuccess) {
+      widget.onReordered?.call();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.errorMessage ?? 'Could not save the new order'),
+          backgroundColor: LmsColors.error,
+        ),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final bool showChapterActions = onEdit != null || onDelete != null;
-    final bool showLessonActions =
-        onEditLesson != null || onDeleteLesson != null;
+    final bool showChapterActions =
+        widget.onEdit != null || widget.onDelete != null;
+    final lessons = _lessons;
+    // One lesson cannot be reordered, so it gets no handle either.
+    final bool canReorder = widget.onReordered != null && lessons.length > 1;
 
     // The card this sits in paints its own background, which would cover the
     // header tile's ink splashes - so it gets its own transparent Material to
@@ -439,21 +549,53 @@ class ChapterTile extends StatelessWidget {
         child: ExpansionTile(
           tilePadding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
           childrenPadding: const EdgeInsets.only(bottom: 8),
-          leading: Container(
-            width: 30,
-            height: 30,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: LmsColors.textDark.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Text(
-              '$chapterNumber',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: LmsColors.textDark,
-              ),
+          // A folder with its number on it. The bare digit in a grey square
+          // read as a list marker; the icon says "this opens" before the
+          // chevron does, and the number keeps the reading order visible.
+          leading: SizedBox(
+            width: 34,
+            height: 34,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: LmsColors.primarySoft,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.folder_copy_rounded,
+                    size: 17,
+                    color: LmsColors.primary,
+                  ),
+                ),
+                Positioned(
+                  right: -4,
+                  bottom: -4,
+                  child: Container(
+                    width: 17,
+                    height: 17,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: LmsColors.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.6),
+                    ),
+                    child: Text(
+                      '${widget.chapterNumber}',
+                      style: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        height: 1.1,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           title: Text(
@@ -470,9 +612,9 @@ class ChapterTile extends StatelessWidget {
               // Moved up here from the foot of the list: adding a lesson is a
               // chapter-level action, and at the bottom it drifted further down
               // the page with every lesson added.
-              if (onAddLesson != null)
+              if (widget.onAddLesson != null)
                 TextButton(
-                  onPressed: onAddLesson,
+                  onPressed: widget.onAddLesson,
                   style: TextButton.styleFrom(
                     foregroundColor: LmsColors.primary,
                     // The header row is tight, so the button carries no padding
@@ -503,8 +645,8 @@ class ChapterTile extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       onSelected: (value) {
-                        if (value == 'edit') onEdit?.call();
-                        if (value == 'delete') onDelete?.call();
+                        if (value == 'edit') widget.onEdit?.call();
+                        if (value == 'delete') widget.onDelete?.call();
                       },
                       itemBuilder: (ctx) => const [
                         PopupMenuItem(
@@ -524,27 +666,61 @@ class ChapterTile extends StatelessWidget {
             ],
           ),
           children: [
-            if (chapter.lessons.isEmpty)
+            if (lessons.isEmpty)
               const EmptyRow(text: 'No lessons added yet.')
             else
-              ...List.generate(chapter.lessons.length, (index) {
-                return _LessonTimelineRow(
-                  lesson: chapter.lessons[index],
-                  index: index,
-                  isFirst: index == 0,
-                  isLast: index == chapter.lessons.length - 1,
-                  planTitles: planTitles,
-                  onEdit: onEditLesson == null
-                      ? null
-                      : () => onEditLesson!(chapter.lessons[index]),
-                  onDelete: onDeleteLesson == null
-                      ? null
-                      : () => onDeleteLesson!(chapter.lessons[index]),
-                  onEditSubscription: onEditLessonSubscription == null
-                      ? null
-                      : () => onEditLessonSubscription!(chapter.lessons[index]),
-                );
-              }),
+              // Drag to reorder. The list carries every lesson in the chapter,
+              // not just the videos - the endpoint renumbers from the array,
+              // so posting a filtered subset would renumber everything else
+              // around it.
+              ReorderableListView.builder(
+                shrinkWrap: true,
+                buildDefaultDragHandles: false,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: lessons.length,
+                onReorder: canReorder ? _reorder : (_, __) {},
+                itemBuilder: (context, index) {
+                  final lesson = lessons[index];
+                  return ReorderableDragStartListener(
+                    key: ValueKey(lesson.id),
+                    index: index,
+                    child: _LessonTimelineRow(
+                      lesson: lesson,
+                      index: index,
+                      isFirst: index == 0,
+                      isLast: index == lessons.length - 1,
+                      planTitles: widget.planTitles,
+                      draggable: canReorder,
+                      onEdit: widget.onEditLesson == null
+                          ? null
+                          : () => widget.onEditLesson!(lesson),
+                      onDelete: widget.onDeleteLesson == null
+                          ? null
+                          : () => widget.onDeleteLesson!(lesson),
+                      onEditSubscription:
+                          widget.onEditLessonSubscription == null
+                              ? null
+                              : () => widget.onEditLessonSubscription!(lesson),
+                    ),
+                  );
+                },
+              ),
+            if (_isSaving)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                    SizedBox(width: 9),
+                    Text('Saving the new order…',
+                        style: TextStyle(
+                            fontSize: 11.5, color: LmsColors.textGrey)),
+                  ],
+                ),
+              ),
             const SizedBox(height: 6),
           ],
         ),
@@ -564,6 +740,11 @@ class _LessonTimelineRow extends StatelessWidget {
   final bool isFirst;
   final bool isLast;
   final Map<int, String> planTitles;
+
+  /// Shows the grab handle. The row is only draggable where the parent has
+  /// wired reordering, so the affordance never promises what it cannot do.
+  final bool draggable;
+
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
   final VoidCallback? onEditSubscription;
@@ -574,6 +755,7 @@ class _LessonTimelineRow extends StatelessWidget {
     required this.isFirst,
     required this.isLast,
     this.planTitles = const {},
+    this.draggable = false,
     this.onEdit,
     this.onDelete,
     this.onEditSubscription,
@@ -582,7 +764,7 @@ class _LessonTimelineRow extends StatelessWidget {
   /// Where the node sits from the top of the row - lines up with the middle of
   /// the title line, not the middle of the row, which drifts as badges wrap.
   static const double _nodeTop = 15;
-  static const double _nodeSize = 11;
+  static const double _nodeIcon = 18;
   static const double _railWidth = 34;
 
   @override
@@ -603,6 +785,17 @@ class _LessonTimelineRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // The handle replaces the rail's left margin rather than adding
+              // width, so a draggable list is not a wider list.
+              if (draggable)
+                Padding(
+                  padding: const EdgeInsets.only(top: 9),
+                  child: Tooltip(
+                    message: 'Drag to reorder',
+                    child: Icon(Icons.drag_indicator_rounded,
+                        size: 16, color: LmsColors.border),
+                  ),
+                ),
               SizedBox(
                 width: _railWidth,
                 child: Stack(
@@ -616,16 +809,21 @@ class _LessonTimelineRow extends StatelessWidget {
                       height: isLast ? _nodeTop : null,
                       child: Container(width: 2, color: LmsColors.border),
                     ),
+                    // The node carries the lesson's type, so a reorderable
+                    // list still says what each row is - video, note or quiz
+                    // all share one order inside a chapter.
                     Positioned(
-                      top: _nodeTop - _nodeSize / 2,
+                      top: _nodeTop - _nodeIcon / 2,
                       child: Container(
-                        width: _nodeSize,
-                        height: _nodeSize,
+                        width: _nodeIcon,
+                        height: _nodeIcon,
+                        alignment: Alignment.center,
                         decoration: BoxDecoration(
                           color: ui.color,
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2.5),
+                          border: Border.all(color: Colors.white, width: 2),
                         ),
+                        child: Icon(ui.icon, size: 10, color: Colors.white),
                       ),
                     ),
                   ],
@@ -641,7 +839,7 @@ class _LessonTimelineRow extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              '${index + 1}.  ${lesson.title}',
+                              lesson.title,
                               style: const TextStyle(
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w600,
