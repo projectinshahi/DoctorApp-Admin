@@ -332,11 +332,29 @@ class StudentDetail {
   final List<AttemptSummary> recentQuizAttempts;
   final List<AttemptSummary> recentTestAttempts;
 
+  /// The session block. [lastSeenAt] is what the single-device rule compares
+  /// against, so it is the field that answers "why can't I log in?" - without
+  /// it an admin can only guess whether a student is genuinely stuck.
+  final bool isLoggedIn;
+  final String? currentDeviceId;
+  final DateTime? lastLoginAt;
+  final DateTime? lastSeenAt;
+
+  /// The account status as the detail endpoint reports it. Null when this
+  /// payload does not carry one, in which case the row the screen was opened
+  /// from stays authoritative.
+  final String? status;
+
   const StudentDetail({
     required this.progress,
     this.chapters = const [],
     this.recentQuizAttempts = const [],
     this.recentTestAttempts = const [],
+    this.isLoggedIn = false,
+    this.currentDeviceId,
+    this.lastLoginAt,
+    this.lastSeenAt,
+    this.status,
   });
 
   /// The API caps each history array at 20. A full array means there is very
@@ -379,7 +397,17 @@ class StudentDetail {
       return <T>[];
     }
 
+    // The session fields sit beside the student, not inside progress.
+    DateTime? stamp(String key) =>
+        DateTime.tryParse('${root[key] ?? json[key] ?? ''}');
+
     return StudentDetail(
+      isLoggedIn: (root['isLoggedIn'] ?? json['isLoggedIn']) == true,
+      currentDeviceId:
+          (root['currentDeviceId'] ?? json['currentDeviceId']) as String?,
+      lastLoginAt: stamp('lastLoginAt'),
+      lastSeenAt: stamp('lastSeenAt'),
+      status: (root['status'] ?? json['status']) as String?,
       progress: StudentProgress.fromJson(progress ?? const {}),
       chapters: listOf(
         const ['chapters', 'chapterProgress', 'courseProgress', 'syllabus'],

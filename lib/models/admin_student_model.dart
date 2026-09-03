@@ -21,6 +21,35 @@ class CourseInfo {
   }
 }
 
+/// The only three values the API accepts on PATCH /admin/students/:id/status.
+///
+/// Anything else is a 400, so this is an enum rather than a free string:
+/// "inactive" and "disabled" read like they would work and do not.
+enum StudentStatus {
+  verified('verified', 'Active'),
+  unverified('unverified', 'Unverified'),
+  blocked('blocked', 'Blocked');
+
+  final String wire;
+  final String label;
+
+  const StudentStatus(this.wire, this.label);
+
+  /// Unknown values keep their own text rather than being forced into one of
+  /// the three - a status this panel has not heard of must not render as
+  /// "Active".
+  static StudentStatus? parse(String raw) {
+    final value = raw.trim().toLowerCase();
+    for (final status in StudentStatus.values) {
+      if (status.wire == value) return status;
+    }
+    // The list endpoint has historically also returned "active" for a
+    // verified student.
+    if (value == 'active') return StudentStatus.verified;
+    return null;
+  }
+}
+
 class AdminStudentModel {
   final int id;
   final String? name;
@@ -58,6 +87,28 @@ class AdminStudentModel {
           : null,
     );
   }
+
+  StudentStatus? get statusValue => StudentStatus.parse(status);
+
+  bool get isBlocked => statusValue == StudentStatus.blocked;
+
+  /// What to show on a chip. Falls back to the server's own word so an
+  /// unrecognised status is visible rather than silently normalised.
+  String get statusLabel => statusValue?.label ?? (status.isEmpty ? 'Unknown' : status);
+
+  /// Used to carry a status change back from PATCH .../status without
+  /// refetching the list. The response returns only the account fields, so
+  /// everything else is kept.
+  AdminStudentModel copyWith({String? status}) => AdminStudentModel(
+        id: id,
+        name: name,
+        email: email,
+        phone: phone,
+        status: status ?? this.status,
+        createdAt: createdAt,
+        course: course,
+        courseType: courseType,
+      );
 }
 
 class PaginationModel {

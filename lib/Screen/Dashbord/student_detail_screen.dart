@@ -7,6 +7,7 @@ import '../../models/student_progress_model.dart';
 import '../../services/admin_plan_services.dart';
 import '../../services/admin_student_service.dart';
 import '../../widget/shimmer_loading.dart';
+import '../../widget/student_actions.dart';
 import '../../widget/student_progress_widgets.dart';
 import 'student_progress_detail_screen.dart';
 
@@ -31,7 +32,15 @@ import 'student_progress_detail_screen.dart';
 class StudentDetailScreen extends StatefulWidget {
   final AdminStudentModel student;
 
-  const StudentDetailScreen({super.key, required this.student});
+  /// Called on pop when the account status changed in here, so the list can
+  /// re-read the row instead of keeping a stale chip.
+  final Future<void> Function()? onChanged;
+
+  const StudentDetailScreen({
+    super.key,
+    required this.student,
+    this.onChanged,
+  });
 
   @override
   State<StudentDetailScreen> createState() => _StudentDetailScreenState();
@@ -49,9 +58,16 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
   bool _isLoadingDetail = false;
   String? _detailError;
 
-  AdminStudentModel get _student => widget.student;
+  /// Replaced wholesale by whatever PATCH .../status returns, never patched
+  /// field by field: the response is the only thing that knows the change
+  /// landed.
+  late AdminStudentModel _student = widget.student;
 
-  bool get _isActive => _student.status.toLowerCase() == 'active';
+  /// True once the status changed, so the list behind can refresh on pop
+  /// rather than showing a stale chip.
+  bool _changed = false;
+
+  bool get _isActive => _student.statusValue == StudentStatus.verified;
 
   String get _displayName {
     final name = _student.name?.trim();
@@ -147,6 +163,18 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return PopScope(
+      // The list behind shows the status chip, so it has to hear about a
+      // block that happened in here.
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop && _changed) widget.onChanged?.call();
+      },
+      child: _scaffold(),
+    );
+  }
+
+  Widget _scaffold() {
     return Scaffold(
       backgroundColor: LmsColors.bg,
       // No title: the hero below already names the student, and repeating it
@@ -189,13 +217,17 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
                         icon: Icons.event_outlined),
                     _InfoRow(
                       'Account status',
-                      _isActive ? 'Active' : _student.status,
+                      _student.statusLabel,
                       icon: Icons.verified_user_outlined,
-                      valueColor:
-                          _isActive ? LmsColors.success : LmsColors.error,
+                      valueColor: statusColor(_student),
                     ),
+                    _InfoRow('Sessions', _sessionLine(),
+                        icon: Icons.devices_outlined,
+                        muted: _detail?.isLoggedIn != true),
                   ],
                 ),
+                const SizedBox(height: 14),
+                _accountActions(),
                 const SizedBox(height: 24),
 
                 const _SectionLabel('Selected course'),
@@ -211,6 +243,92 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ── Account actions ──────────────────────────────────────────────
+
+  /// "Signed in on PHONE-A · last active 4 minutes ago", or "Not signed in".
+  ///
+  /// lastSeenAt is what the single-device rule compares against, so this line
+  /// is what answers "why can't I log in?" - the question this screen is
+  /// usually opened to settle.
+  String _sessionLine() {
+    final detail = _detail;
+    if (detail == null) return 'Loading…';
+    if (!detail.isLoggedIn) return 'Not signed in';
+
+    final device = detail.currentDeviceId?.trim();
+    final seen = detail.lastSeenAt ?? detail.lastLoginAt;
+
+    return [
+      device?.isNotEmpty == true ? 'Signed in on $device' : 'Signed in',
+      if (seen != null) 'last active ${relativeStamp(seen)}',
+    ].join(' · ');
+  }
+
+  Future<void> _toggleBlocked() async {
+    final updated =
+        await confirmSetBlocked(context, _student, blocked: !_student.isBlocked);
+    if (updated == null || !mounted) return;
+
+    setState(() {
+      _student = updated;
+      _changed = true;
+    });
+    // The session block only exists on the detail payload, and a block just
+    // emptied it.
+    await _loadDetail();
+  }
+
+  Future<void> _signOutEverywhere() async {
+    final done = await confirmSignOutEverywhere(context, _student);
+    if (done && mounted) await _loadDetail();
+  }
+
+  Widget _accountActions() {
+    final blocked = _student.isBlocked;
+
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        // Plain, and listed first: this is the fix for the common problem, and
+        // an admin reaching for Block to solve a lockout is the mistake this
+        // ordering is meant to prevent.
+        OutlinedButton.icon(
+          onPressed: _signOutEverywhere,
+          icon: const Icon(Icons.logout_rounded, size: 17),
+          label: const Text('Sign out all devices'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: LmsColors.textDark,
+            side: const BorderSide(color: LmsColors.border),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          ),
+        ),
+        if (blocked)
+          FilledButton.icon(
+            onPressed: _toggleBlocked,
+            icon: const Icon(Icons.lock_open_rounded, size: 17),
+            label: const Text('Unblock student'),
+            style: FilledButton.styleFrom(
+              backgroundColor: LmsColors.success,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            ),
+          )
+        else
+          // Destructive, and visually nothing like the button beside it.
+          OutlinedButton.icon(
+            onPressed: _toggleBlocked,
+            icon: const Icon(Icons.block_rounded, size: 17),
+            label: const Text('Block student'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: LmsColors.error,
+              side: BorderSide(color: LmsColors.error.withValues(alpha: 0.45)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            ),
+          ),
+      ],
     );
   }
 
@@ -292,10 +410,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
             runSpacing: 8,
             children: [
               _HeroChip(
-                icon: _isActive
-                    ? Icons.check_circle_rounded
-                    : Icons.pause_circle_rounded,
-                label: _student.status.toUpperCase(),
+                icon: statusIcon(_student),
+                label: _student.statusLabel.toUpperCase(),
               ),
               _HeroChip(icon: Icons.badge_outlined, label: 'ID #${_student.id}'),
               if (lastActive != null)

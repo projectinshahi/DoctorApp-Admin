@@ -33,6 +33,29 @@ String formatStamp(DateTime value) {
       '$hour:$minute ${d.hour < 12 ? 'AM' : 'PM'}';
 }
 
+/// "4 minutes ago". Relative, because the question this answers is "is this
+/// student active right now?" - and an absolute clock time makes the reader do
+/// the subtraction.
+///
+/// Falls back to the absolute stamp past a week, where "23 days ago" stops
+/// being easier to read than the date.
+String relativeStamp(DateTime value) {
+  final diff = DateTime.now().difference(value.toLocal());
+
+  if (diff.isNegative) return 'just now';
+  if (diff.inSeconds < 60) return 'just now';
+  if (diff.inMinutes < 60) {
+    return '${diff.inMinutes} minute${diff.inMinutes == 1 ? '' : 's'} ago';
+  }
+  if (diff.inHours < 24) {
+    return '${diff.inHours} hour${diff.inHours == 1 ? '' : 's'} ago';
+  }
+  if (diff.inDays < 7) {
+    return '${diff.inDays} day${diff.inDays == 1 ? '' : 's'} ago';
+  }
+  return formatStamp(value);
+}
+
 /// "inProgress" -> "In progress". Used so a counter the backend adds later
 /// still reads as a label without a model change.
 String humanizeKey(String key) {
