@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import '../models/panal_model.dart';
 
 import '../models/Course_model.dart';
 import '../models/course_details_model.dart'; // adjust path to wherever CourseDetails/CourseDetailsResponse live
@@ -39,6 +40,7 @@ class CourseProvider extends ChangeNotifier {
     String accessType = 'free',
     int displayOrder = 0,
     List<CourseTypeModel> courseTypes = const [],
+    List<AdminPlanModel> plans = const [],
   }) async {
     _isLoading = true;
     _errorMessage = null;
@@ -55,6 +57,7 @@ class CourseProvider extends ChangeNotifier {
         accessType: accessType,
         displayOrder: displayOrder,
         courseTypes: courseTypes,
+        plans: plans,
       );
 
       _createdCourse = course;

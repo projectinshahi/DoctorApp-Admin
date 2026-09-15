@@ -183,14 +183,26 @@ class _StudentRow extends StatelessWidget {
               ? student.phone!
               : '—',
           style: const TextStyle(color: LmsColors.textDark, fontSize: 13),
+          overflow: TextOverflow.ellipsis,
         );
 
-        final statusBlock = StudentStatusChip(student: student, dense: true);
+        // Left-aligned inside their columns rather than stretched: a chip that
+        // fills its column reads as a button.
+        final statusBlock = Align(
+          alignment: Alignment.centerLeft,
+          child: StudentStatusChip(student: student, dense: true),
+        );
 
         final menu = _StudentRowMenu(student: student, onChanged: onChanged);
 
         final courseBlock = course != null
-            ? _CourseChip(title: course.title, isPremium: course.isPremium)
+            ? Align(
+                alignment: Alignment.centerLeft,
+                child: _CourseChip(
+                  title: course.title,
+                  isPremium: course.isPremium,
+                ),
+              )
             : Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,

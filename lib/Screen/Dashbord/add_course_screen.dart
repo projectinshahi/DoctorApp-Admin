@@ -1,5 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+
+import 'plan_card_editor.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/theam/theam_dart.dart';
@@ -20,7 +22,6 @@ class _CourseTypeFormEntry {
   final descriptionController = TextEditingController();
   final displayOrderController = TextEditingController();
   String status = "draft";
-  String accessType = "free";
 
   void dispose() {
     titleController.dispose();
@@ -40,6 +41,9 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
   String _accessType = "free";
   String _status = "draft";
 
+  /// Only ever sent on a premium course - a free course has nothing to sell.
+  final List<PlanDraft> _plans = [];
+
   @override
   void dispose() {
     _titleController.dispose();
@@ -47,6 +51,9 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
     _displayOrderController.dispose();
     for (final entry in _courseTypeEntries) {
       entry.dispose();
+    }
+    for (final plan in _plans) {
+      plan.dispose();
     }
     super.dispose();
   }
@@ -64,8 +71,32 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
     });
   }
 
+  bool get _isPremium => _accessType == 'premium';
+
+  List<PlanDraft> get _usablePlans =>
+      _plans.where((p) => !p.isBlank).toList();
+
   Future<void> _handleCreate(CourseProvider courseProvider) async {
     if (!_formKey.currentState!.validate()) return;
+
+    if (_isPremium) {
+      // A premium course with no plans is locked to everyone with no way to
+      // buy it - the worst state this panel can produce, and one forgotten
+      // step away. It is refused here rather than explained afterwards.
+      if (_usablePlans.isEmpty) {
+        _toast('A premium course needs at least one plan, or nobody can buy '
+            'it.', isError: true);
+        return;
+      }
+      for (var i = 0; i < _usablePlans.length; i++) {
+        final problem = _usablePlans[i].problem;
+        if (problem != null) {
+          // Named by position, the way the server names plans[2].
+          _toast('Plan ${i + 1} $problem.', isError: true);
+          return;
+        }
+      }
+    }
 
     // Build courseTypes list, skipping empty rows (no title entered)
     final courseTypes = _courseTypeEntries
@@ -76,7 +107,10 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
           ? null
           : e.descriptionController.text.trim(),
       status: e.status,
-      accessType: e.accessType,
+      // Access is decided once, on the course. An exam type under a premium
+      // course is premium; there is no case where one of them is sold
+      // separately, and two places to set it meant two places to get it wrong.
+      accessType: _accessType,
       displayOrder: int.tryParse(e.displayOrderController.text.trim()),
     ))
         .toList();
@@ -90,6 +124,11 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
       displayOrder: int.tryParse(_displayOrderController.text.trim()) ?? 0,
       status: _status,
       courseTypes: courseTypes,
+      // courseId is 0 here: the course does not exist yet, and the server
+      // attaches these to whatever id it creates.
+      plans: _isPremium
+          ? [for (final p in _usablePlans) p.toModel(0)]
+          : const [],
     );
 
     if (!mounted) return;
@@ -112,6 +151,13 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
         ),
       );
     }
+  }
+
+  void _toast(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: isError ? LmsColors.error : null,
+    ));
   }
 
   @override
@@ -314,21 +360,6 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
                                 onChanged: (v) => setState(() => entry.status = v ?? "draft"),
                               ),
                             ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                initialValue: entry.accessType,
-                                decoration: const InputDecoration(
-                                  labelText: "Access type",
-                                  border: OutlineInputBorder(),
-                                ),
-                                items: const [
-                                  DropdownMenuItem(value: "free", child: Text("Free")),
-                                  DropdownMenuItem(value: "premium", child: Text("Premium")),
-                                ],
-                                onChanged: (v) => setState(() => entry.accessType = v ?? "free"),
-                              ),
-                            ),
                           ],
                         ),
                         const SizedBox(height: 10),
@@ -344,6 +375,37 @@ class _CourseListAddFormState extends State<CourseListAddForm> {
                     ),
                   );
                 }),
+                // ── Pricing ────────────────────────────────────────────
+                //
+                // Hidden on a free course: there is nothing to sell, and an
+                // empty pricing step invites someone to fill it in anyway.
+                if (_isPremium) ...[
+                  const SizedBox(height: 24),
+                  const Divider(height: 1, color: LmsColors.border),
+                  const SizedBox(height: 18),
+                  const Text('Pricing',
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Every lesson in this course will be locked until a '
+                    'student subscribes. Mark a lesson as free preview to '
+                    'leave it open.',
+                    style: TextStyle(
+                        fontSize: 12, height: 1.45, color: LmsColors.textGrey),
+                  ),
+                  const SizedBox(height: 14),
+                  PlanCardEditor(
+                    plans: _plans,
+                    enabled: !courseProvider.isLoading,
+                    onChanged: (plans) => setState(() {
+                      _plans
+                        ..clear()
+                        ..addAll(plans);
+                    }),
+                  ),
+                ],
+
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,

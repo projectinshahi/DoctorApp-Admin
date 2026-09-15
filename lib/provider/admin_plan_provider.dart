@@ -50,10 +50,15 @@ class AdminPlanProvider extends ChangeNotifier {
     try {
       lastSavedPlan = await _service.createPlan(
         courseId: courseId,
-        title: title,
-        description: description,
-        price: price,
-        durationDays: durationDays,
+        plan: AdminPlanModel(
+          id: 0,
+          courseId: courseId,
+          title: title,
+          description: description,
+          price: price,
+          durationDays: durationDays,
+          isActive: true,
+        ),
       );
       isSaving = false;
       notifyListeners();

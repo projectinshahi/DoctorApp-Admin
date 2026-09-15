@@ -57,11 +57,13 @@ class _EditCourseTypeSheet extends StatefulWidget {
 
 class _EditCourseTypeSheetState extends State<_EditCourseTypeSheet> {
   static const _statusOptions = ['draft', 'published', 'archived'];
-  static const _accessOptions = ['free', 'premium'];
 
   late final TextEditingController _titleController;
   late final TextEditingController _descriptionController;
   late String _status;
+  /// No longer editable here - access is decided once, on the course. Kept so
+  /// a save resends what the exam type already had rather than silently
+  /// resetting it to free.
   late String _accessType;
   final _formKey = GlobalKey<FormState>();
 
@@ -211,16 +213,7 @@ class _EditCourseTypeSheetState extends State<_EditCourseTypeSheet> {
                 colorFor: _statusColor,
                 onChanged: (v) => setState(() => _status = v),
               ),
-              const SizedBox(height: 18),
 
-              _FieldLabel('Access Type (optional)'),
-              const SizedBox(height: 6),
-              _PremiumDropdown(
-                value: _accessType,
-                items: _accessOptions,
-                colorFor: (v) => v == 'premium' ? LmsColors.primary : const Color(0xFF4C6FFF),
-                onChanged: (v) => setState(() => _accessType = v),
-              ),
 
               if (provider.errorMessage != null) ...[
                 const SizedBox(height: 16),

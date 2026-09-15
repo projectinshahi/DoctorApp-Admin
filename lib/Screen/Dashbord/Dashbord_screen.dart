@@ -11,9 +11,10 @@ import '../QuestionBank/course_quiz_screen.dart';
 import '../../provider/course_get_provider.dart';
 import 'course_list_screen.dart';
 import 'dashboard_overview.dart';
+import '../RapidRecall/rapid_recall_list_screen.dart';
 import 'comment_moderation_screen.dart';
 import 'lesson_video_screen.dart';
-import 'subscription_plans_screen.dart';
+import 'plans_screen.dart';
 import '../Test/test_list_screen.dart';
 import '../Login/Login_screen.dart';
 import '../../core/const/local_storegae.dart';
@@ -53,6 +54,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       NavItem(Icons.menu_book_outlined, "Courses"),
       NavItem(Icons.videocam_outlined, "Videos"),
       NavItem(Icons.help_outline_rounded, "Question Bank"),
+      NavItem(Icons.style_outlined, "Rapid Recall"),
       NavItem(Icons.fact_check_outlined, "Tests"),
     ]),
     NavSection("people", [
@@ -60,7 +62,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       NavItem(Icons.chat_bubble_outline_rounded, "Comments"),
     ]),
     NavSection("business", [
-      NavItem(Icons.credit_card_outlined, "Subscriptions"),
+      NavItem(Icons.sell_outlined, "Plans"),
     ]),
   ];
 
@@ -284,10 +286,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           create: (_) => CourseListGetProvider(),
           child: const LessonVideoScreen(),
         );
-      case "Subscriptions":
+      case "Rapid Recall":
+        return const RapidRecallListScreen();
+      case "Plans":
         return ChangeNotifierProvider(
           create: (_) => CourseListGetProvider(),
-          child: const SubscriptionPlansScreen(),
+          child: const PlansScreen(),
         );
       case "Tests":
         return ChangeNotifierProvider(

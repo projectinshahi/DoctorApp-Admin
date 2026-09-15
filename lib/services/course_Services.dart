@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../models/panal_model.dart';
 
 import 'package:http/http.dart' as http;
 
@@ -20,6 +21,7 @@ class CourseService {
     String accessType = 'free',
     int displayOrder = 0,
     List<CourseTypeModel> courseTypes = const [],
+    List<AdminPlanModel> plans = const [],
   }) async {
     final token = await AdminLocalStorage.getToken();
 
@@ -44,6 +46,14 @@ class CourseService {
 
     if (courseTypes.isNotEmpty) {
       body['courseTypes'] = courseTypes.map((ct) => ct.toJson()).toList();
+    }
+
+    // Both arrays are optional and can be added later, so an empty one is
+    // omitted rather than sent as [] - the server treats the two the same, but
+    // a body that only carries what the admin filled in is easier to read in
+    // a log when a create is refused.
+    if (plans.isNotEmpty) {
+      body['plans'] = plans.map((p) => p.toJson()).toList();
     }
 
     try {

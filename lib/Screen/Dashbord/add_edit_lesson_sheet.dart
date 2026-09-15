@@ -12,15 +12,24 @@ import '../../models/quiz_model.dart';
 import '../../services/quiz_service.dart';
 import '../../services/sheet_question_sync_service.dart';
 import '../../widget/sheet_quiz_picker.dart';
-import 'lesson_subscription_sheet.dart';
 
+/// A media slot on the lesson sheet, in one of four states: waiting for a
+/// file, uploading, attached, or failed.
+///
+/// An image ([previewImage]) is shown large and cropped the way the lesson
+/// card crops it, so a wrong or badly framed cover is caught here rather than
+/// after publishing. Anything else - the video - is a row naming the file.
 class _UploadTile extends StatelessWidget {
   final IconData icon;
   final Color color;
   final bool isUploading;
   final bool hasFile;
   final String? fileLabel;
-  final String placeholder;
+
+  /// The empty state's heading and the line under it.
+  final String title;
+  final String subtitle;
+
   final String? errorMessage;
   final VoidCallback onPick;
   final VoidCallback onRetry;
@@ -33,7 +42,8 @@ class _UploadTile extends StatelessWidget {
     required this.isUploading,
     required this.hasFile,
     required this.fileLabel,
-    required this.placeholder,
+    required this.title,
+    required this.subtitle,
     required this.errorMessage,
     required this.onPick,
     required this.onRetry,
@@ -41,73 +51,175 @@ class _UploadTile extends StatelessWidget {
     this.previewImage,
   });
 
+  Widget _frame({required Color tint, required Widget child}) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: tint.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tint.withValues(alpha: 0.28)),
+        ),
+        child: child,
+      );
+
+  Widget _actions() => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextButton(onPressed: onPick, child: const Text('Replace')),
+          TextButton(
+            onPressed: onRemove,
+            style: TextButton.styleFrom(foregroundColor: LmsColors.error),
+            child: const Text('Remove'),
+          ),
+        ],
+      );
+
   @override
   Widget build(BuildContext context) {
     if (errorMessage != null) {
-      return Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: LmsColors.error.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: LmsColors.error.withOpacity(0.3)),
-        ),
+      return _frame(
+        tint: LmsColors.error,
         child: Row(
           children: [
-            const Icon(Icons.error_outline_rounded, color: LmsColors.error, size: 18),
-            const SizedBox(width: 8),
-            Expanded(child: Text(errorMessage!, style: const TextStyle(color: LmsColors.error, fontSize: 12.5))),
-            TextButton(onPressed: onRetry, child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w700))),
+            const Icon(Icons.error_outline_rounded,
+                color: LmsColors.error, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(errorMessage!,
+                  style: const TextStyle(
+                      color: LmsColors.error, fontSize: 12.5, height: 1.35)),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('Try again',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
       );
     }
 
     if (isUploading) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        decoration: BoxDecoration(color: LmsColors.bg, borderRadius: BorderRadius.circular(12), border: Border.all(color: LmsColors.border)),
-        child: Row(
+      return _frame(
+        tint: color,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: color)),
-            const SizedBox(width: 10),
-            const Text('Uploading...', style: TextStyle(fontSize: 13, color: LmsColors.textGrey)),
+            Row(
+              children: [
+                _UploadBadge(icon: icon, color: color),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        fileLabel ?? 'Uploading',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: LmsColors.textDark),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text('Uploading — keep this sheet open',
+                          style: TextStyle(
+                              fontSize: 11.5, color: LmsColors.textGrey)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                minHeight: 5,
+                color: color,
+                backgroundColor: color.withValues(alpha: 0.15),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (hasFile && previewImage != null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: LmsColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: LmsColors.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: 200,
+              child: ColoredBox(color: LmsColors.bg, child: previewImage),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      size: 16, color: LmsColors.success),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      fileLabel ?? 'Image attached',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: LmsColors.textDark),
+                    ),
+                  ),
+                  _actions(),
+                ],
+              ),
+            ),
           ],
         ),
       );
     }
 
     if (hasFile) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.25)),
-        ),
+      return _frame(
+        tint: color,
         child: Row(
           children: [
-            if (previewImage != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(width: 40, height: 40, child: previewImage),
-              ),
-              const SizedBox(width: 10),
-            ] else ...[
-              Icon(icon, size: 18, color: color),
-              const SizedBox(width: 10),
-            ],
+            _UploadBadge(icon: icon, color: color),
+            const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                fileLabel ?? 'File attached',
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    fileLabel ?? 'File attached',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: LmsColors.textDark),
+                  ),
+                  const SizedBox(height: 3),
+                  const Row(
+                    children: [
+                      Icon(Icons.check_circle_rounded,
+                          size: 13, color: LmsColors.success),
+                      SizedBox(width: 5),
+                      Text('Uploaded',
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: LmsColors.success)),
+                    ],
+                  ),
+                ],
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.close_rounded, size: 18, color: LmsColors.textGrey),
-              onPressed: onRemove,
-              tooltip: 'Remove',
-            ),
+            _actions(),
           ],
         ),
       );
@@ -115,24 +227,78 @@ class _UploadTile extends StatelessWidget {
 
     return InkWell(
       onTap: onPick,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
         decoration: BoxDecoration(
-          color: LmsColors.bg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: LmsColors.border),
+          color: color.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.35), width: 1.2),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: LmsColors.textGrey),
+            _UploadBadge(icon: icon, color: color, size: 46),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: LmsColors.textDark)),
+                  const SizedBox(height: 3),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          fontSize: 12, color: LmsColors.textGrey)),
+                ],
+              ),
+            ),
             const SizedBox(width: 10),
-            Text(placeholder, style: const TextStyle(fontSize: 13, color: LmsColors.textGrey)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.upload_rounded, size: 16, color: Colors.white),
+                  SizedBox(width: 6),
+                  Text('Browse',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+class _UploadBadge extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final double size;
+
+  const _UploadBadge({required this.icon, required this.color, this.size = 40});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, size: size * 0.48, color: color),
+      );
 }
 
 class _FieldLabel extends StatelessWidget {
@@ -204,8 +370,6 @@ Future<bool?> showAddEditLessonSheet(
   );
 }
 
-enum _VideoSourceMode { upload, url }
-
 class _AddEditLessonSheet extends StatefulWidget {
   final int chapterId;
   final int? courseId; // NEW
@@ -265,7 +429,13 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   late final TextEditingController _descriptionController;
   late final TextEditingController _videoUrlController;
   LessonType _type = LessonType.video;
+  /// No longer editable here - see the build method. Kept so a save resends
+  /// what the lesson already had rather than quietly closing a free preview
+  /// that students were relying on.
   late bool _isFreePreview;
+  /// No longer editable here - access is decided once, on the course. Kept so
+  /// a save resends what the lesson already had, along with [_planIds], rather
+  /// than silently resetting an existing premium lesson to free.
   late LessonAccessType _accessType;
   late LessonStatus _status; // NEW
 
@@ -273,12 +443,8 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   // means "any active subscription".
   late Set<int> _planIds;
 
-  _VideoSourceMode _videoSourceMode = _VideoSourceMode.upload;
   String? _videoUrl;
   String? _videoPublicId;
-  String? _pickedVideoName;
-  bool _isUploadingVideo = false;
-  String? _videoUploadError;
   bool _videoRemoved = false;
 
   String? _thumbnailUrl;
@@ -291,9 +457,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   String? _noteUrl;
   String? _notePublicId;
   String? _noteFileType;
-  String? _pickedNoteName;
   bool _isUploadingNote = false;
-  String? _noteUploadError;
   bool _noteRemoved = false;
 
   // ── Quiz ─────────────────────────────────────────────────────────
@@ -325,7 +489,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
 
   late final bool _startedAsQuiz;
 
-  String? _freshVideoPublicId;
   String? _freshThumbnailPublicId;
   String? _freshNotePublicId;
 
@@ -337,8 +500,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   bool get _hadInitialThumbnail =>
       widget.initialThumbnailUrl != null || widget.initialThumbnailPublicId != null;
 
-  bool get _hadInitialNote =>
-      widget.initialNoteUrl != null || widget.initialNotePublicId != null;
 
   bool get _hadInitialDescription =>
       widget.initialDescription != null && widget.initialDescription!.trim().isNotEmpty;
@@ -358,10 +519,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     _videoPublicId = widget.initialVideoPublicId;
     _videoUrlController = TextEditingController(text: widget.initialVideoUrl ?? '');
 
-    if (widget.initialVideoUrl != null && widget.initialVideoPublicId == null) {
-      _videoSourceMode = _VideoSourceMode.url;
-    }
-
     _thumbnailUrl = widget.initialThumbnailUrl;
     _thumbnailPublicId = widget.initialThumbnailPublicId;
 
@@ -380,7 +537,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     // unreferenced. Fire-and-forget through the service, not the provider:
     // ChangeNotifierProvider is tearing the provider down right now and its
     // notifyListeners() would throw.
-    _discardOrphan(_freshVideoPublicId, _uploadService.deleteVideo);
     _discardOrphan(_freshThumbnailPublicId, _uploadService.deleteThumbnail);
     _discardOrphan(_freshNotePublicId, _uploadService.deleteNote);
 
@@ -402,92 +558,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   ) async {
     if (publicId == null || publicId.isEmpty) return;
     await delete(publicId: publicId);
-  }
-
-  void _setAccessType(LessonAccessType value) {
-    setState(() {
-      _accessType = value;
-      // Mirrors the backend: a free lesson can't carry plans.
-      if (value != LessonAccessType.premium) _planIds = {};
-    });
-  }
-
-  Future<void> _pickVideo() async {
-    final provider = context.read<LessonUpdateProvider>();
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.video,
-      withData: true,
-    );
-    if (result == null || result.files.single.bytes == null) return;
-
-    final Uint8List bytes = result.files.single.bytes!;
-    final String name = result.files.single.name;
-
-    // Replacing a file picked earlier in this session: the old upload is
-    // about to become unreachable, so drop it before the new one lands.
-    final String? replaced = _freshVideoPublicId;
-
-    setState(() {
-      _pickedVideoName = name;
-      _isUploadingVideo = true;
-      _videoUploadError = null;
-      _videoRemoved = false;
-      _freshVideoPublicId = null;
-    });
-
-    await _deleteFreshAsset(replaced, provider.deleteVideoAsset);
-
-    final uploadResult = await _uploadService.uploadVideo(bytes, name);
-
-    if (!mounted) return;
-    setState(() {
-      _isUploadingVideo = false;
-      if (uploadResult.isSuccess) {
-        _videoUrl = uploadResult.url;
-        _videoPublicId = uploadResult.publicId;
-        _freshVideoPublicId = uploadResult.publicId;
-      } else {
-        _videoUploadError = uploadResult.errorMessage;
-      }
-    });
-  }
-
-  Future<void> _removeVideo() async {
-    final provider = context.read<LessonUpdateProvider>();
-    final String? orphan = _freshVideoPublicId;
-
-    setState(() {
-      _videoUrl = null;
-      _videoPublicId = null;
-      _pickedVideoName = null;
-      _videoUploadError = null;
-      _freshVideoPublicId = null;
-      _videoUrlController.clear();
-      _videoRemoved = _isEditMode && _hadInitialVideo;
-    });
-
-    await _deleteFreshAsset(orphan, provider.deleteVideoAsset);
-  }
-
-  Future<void> _setVideoSourceMode(_VideoSourceMode mode) async {
-    if (mode == _videoSourceMode) return;
-
-    final provider = context.read<LessonUpdateProvider>();
-    final String? orphan = _freshVideoPublicId;
-
-    setState(() {
-      _videoSourceMode = mode;
-      _videoUrl = null;
-      _videoPublicId = null;
-      _pickedVideoName = null;
-      _videoUploadError = null;
-      _freshVideoPublicId = null;
-      _videoUrlController.clear();
-      _videoRemoved = _isEditMode && _hadInitialVideo;
-    });
-
-    await _deleteFreshAsset(orphan, provider.deleteVideoAsset);
   }
 
   void _onVideoUrlChanged(String value) {
@@ -552,64 +622,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     });
 
     await _deleteFreshAsset(orphan, provider.deleteThumbnailAsset);
-  }
-
-  Future<void> _pickNote() async {
-    final provider = context.read<LessonUpdateProvider>();
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'doc', 'docx'],
-      withData: true,
-    );
-    if (result == null || result.files.single.bytes == null) return;
-
-    final Uint8List bytes = result.files.single.bytes!;
-    final String name = result.files.single.name;
-
-    final String? replaced = _freshNotePublicId;
-
-    setState(() {
-      _pickedNoteName = name;
-      _isUploadingNote = true;
-      _noteUploadError = null;
-      _noteRemoved = false;
-      _freshNotePublicId = null;
-    });
-
-    await _deleteFreshAsset(replaced, provider.deleteNoteAsset);
-
-    final uploadResult = await _uploadService.uploadNote(bytes, name);
-
-    if (!mounted) return;
-    setState(() {
-      _isUploadingNote = false;
-      if (uploadResult.isSuccess) {
-        _noteUrl = uploadResult.url;
-        _notePublicId = uploadResult.publicId;
-        _noteFileType = uploadResult.fileType;
-        _freshNotePublicId = uploadResult.publicId;
-      } else {
-        _noteUploadError = uploadResult.errorMessage;
-      }
-    });
-  }
-
-  Future<void> _removeNote() async {
-    final provider = context.read<LessonUpdateProvider>();
-    final String? orphan = _freshNotePublicId;
-
-    setState(() {
-      _noteUrl = null;
-      _notePublicId = null;
-      _noteFileType = null;
-      _pickedNoteName = null;
-      _noteUploadError = null;
-      _freshNotePublicId = null;
-      _noteRemoved = _isEditMode && _hadInitialNote;
-    });
-
-    await _deleteFreshAsset(orphan, provider.deleteNoteAsset);
   }
 
   /// Switching the primary type. The media tiles are hidden on a quiz
@@ -727,7 +739,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
 
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_isUploadingVideo || _isUploadingThumbnail || _isUploadingNote) return;
+    if (_isUploadingThumbnail || _isUploadingNote) return;
 
     if (_isCreatingQuiz) return;
 
@@ -808,7 +820,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     if (success) {
       if (!_isQuiz) {
         // Persisted onto the lesson - dispose() must not delete them.
-        _freshVideoPublicId = null;
         _freshThumbnailPublicId = null;
         _freshNotePublicId = null;
       }
@@ -836,88 +847,11 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     );
   }
 
-  IconData _noteIcon() {
-    switch (_noteFileType) {
-      case 'doc':
-      case 'docx':
-        return Icons.description_outlined;
-      default:
-        return Icons.picture_as_pdf_outlined;
-    }
-  }
-  Widget _planPicker() {
-    if (widget.courseId == null) {
-      return const Text(
-        'Plan list unavailable here - this lesson will require any active subscription.',
-        style: TextStyle(fontSize: 12, color: LmsColors.textGrey),
-      );
-    }
-
-    // Same selector the standalone subscription sheet uses, so create / edit /
-    // delete of a plan behaves identically wherever you are.
-    return LessonPlanSelector(
-      courseId: widget.courseId!,
-      selectedPlanIds: _planIds,
-      attachedPlans: widget.initialPlans,
-      onChanged: (ids) => setState(() => _planIds = ids),
-    );
-  }
-
-  Widget _sourceModeToggle() {
-    Widget segment(String label, IconData icon, _VideoSourceMode mode) {
-      final isSelected = _videoSourceMode == mode;
-      return Expanded(
-        child: InkWell(
-          onTap: () => _setVideoSourceMode(mode),
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            decoration: BoxDecoration(
-              color: isSelected ? LmsColors.primary : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 15, color: isSelected ? Colors.white : LmsColors.textGrey),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: isSelected ? Colors.white : LmsColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: LmsColors.bg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: LmsColors.border),
-      ),
-      child: Row(
-        children: [
-          segment('Upload file', Icons.upload_outlined, _VideoSourceMode.upload),
-          segment('Paste URL', Icons.link_rounded, _VideoSourceMode.url),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<LessonUpdateProvider>();
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final bool canSave = !provider.isUpdating &&
-        !_isUploadingVideo &&
         !_isUploadingThumbnail &&
         !_isUploadingNote;
 
@@ -1002,7 +936,14 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
-                  children: LessonType.values.map((t) {
+                  // Notes lessons can no longer be created here. A lesson that
+                  // already is one keeps its chip, so editing it shows what it
+                  // is instead of quietly turning it into a video lesson.
+                  children: LessonType.values
+                      .where((t) =>
+                          t != LessonType.text ||
+                          widget.initialType == LessonType.text)
+                      .map((t) {
                     final isSelected = t == _type;
                     return ChoiceChip(
                       label: Text(t.apiValue),
@@ -1056,149 +997,84 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 // lesson the upload tiles come out of the tree rather than
                 // being disabled, so there's nothing to half-fill.
                 if (!_isQuiz) ...[
-                const _FieldLabel('Thumbnail Image (optional)'),
-                const SizedBox(height: 6),
+                // The chips above end flush; without this the next label sat
+                // right against them.
+                const SizedBox(height: 18),
+                const _FieldLabel('Cover image (optional)'),
+                const SizedBox(height: 2),
+                const Text(
+                  'Shown on the lesson card students tap. A wide 16:9 image '
+                  'looks best.',
+                  style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
+                ),
+                const SizedBox(height: 8),
                 _UploadTile(
-                  icon: Icons.image_outlined,
-                  color: const Color(0xFF2ECC71),
+                  icon: Icons.add_photo_alternate_outlined,
+                  color: const Color(0xFF14A38B),
                   isUploading: _isUploadingThumbnail,
                   hasFile: _thumbnailUrl != null,
-                  fileLabel: _pickedThumbnailName ?? (_thumbnailUrl != null ? 'Thumbnail attached' : null),
-                  placeholder: 'Tap to choose an image (JPG, PNG, WEBP)',
+                  fileLabel: _pickedThumbnailName ??
+                      (_thumbnailUrl != null ? 'Current cover image' : null),
+                  title: 'Add a cover image',
+                  subtitle: 'JPG, PNG or WebP',
                   errorMessage: _thumbnailUploadError,
                   onPick: _pickThumbnail,
                   onRetry: _pickThumbnail,
                   onRemove: _removeThumbnail,
                   previewImage: _thumbnailUrl != null
                       ? Image.network(
-                    _thumbnailUrl!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, size: 18),
-                  )
+                          _thumbnailUrl!,
+                          fit: BoxFit.cover,
+                          // Rendered through an <img> element, so a host without
+                          // CORS headers still shows the picture.
+                          webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                          errorBuilder: (_, _, _) => const Center(
+                            child: Icon(Icons.broken_image_outlined,
+                                size: 28, color: LmsColors.textGrey),
+                          ),
+                        )
                       : null,
                 ),
                 const SizedBox(height: 18),
 
-                const _FieldLabel('Class Video (optional)'),
-                const SizedBox(height: 6),
-                _sourceModeToggle(),
-                const SizedBox(height: 8),
-                if (_videoSourceMode == _VideoSourceMode.upload)
-                  _UploadTile(
-                    icon: Icons.play_circle_outline_rounded,
-                    color: const Color(0xFF4C6FFF),
-                    isUploading: _isUploadingVideo,
-                    hasFile: _videoUrl != null,
-                    fileLabel: _pickedVideoName ?? (_videoUrl != null ? 'Video attached' : null),
-                    placeholder: 'Tap to choose a video file (MP4, MOV, MKV, WEBM)',
-                    errorMessage: _videoUploadError,
-                    onPick: _pickVideo,
-                    onRetry: _pickVideo,
-                    onRemove: _removeVideo,
-                  )
-                else
-                  TextFormField(
-                    controller: _videoUrlController,
-                    onChanged: _onVideoUrlChanged,
-                    keyboardType: TextInputType.url,
-                    decoration: _inputDecoration(
-                      'https://example.com/video.mp4',
-                      icon: Icons.link_rounded,
-                    ),
-                    validator: (value) {
-                      if (_videoSourceMode != _VideoSourceMode.url) return null;
-                      final v = value?.trim() ?? '';
-                      if (v.isEmpty) return null;
-                      final uri = Uri.tryParse(v);
-                      if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-                        return 'Enter a valid URL';
-                      }
-                      return null;
-                    },
-                  ),
-                const SizedBox(height: 16),
-
-                const _FieldLabel('Notes (PDF or Word document, optional)'),
-                const SizedBox(height: 6),
-                _UploadTile(
-                  icon: _noteIcon(),
-                  color: const Color(0xFFFF9F43),
-                  isUploading: _isUploadingNote,
-                  hasFile: _noteUrl != null,
-                  fileLabel: _pickedNoteName ?? (_noteUrl != null ? 'Note attached' : null),
-                  placeholder: 'Tap to choose a PDF or Word file',
-                  errorMessage: _noteUploadError,
-                  onPick: _pickNote,
-                  onRetry: _pickNote,
-                  onRemove: _removeNote,
+                // Videos are added by link only - there is no file upload.
+                // A lesson whose video was uploaded before keeps it: the field
+                // opens filled with that video's address, and its publicId is
+                // resent until the link is changed (_onVideoUrlChanged).
+                const _FieldLabel('Lesson video link (optional)'),
+                const SizedBox(height: 2),
+                const Text(
+                  'Paste a YouTube link or a direct link to the video file.',
+                  style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
                 ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _videoUrlController,
+                  onChanged: _onVideoUrlChanged,
+                  keyboardType: TextInputType.url,
+                  decoration: _inputDecoration(
+                    'https://youtube.com/watch?v=... or https://.../video.mp4',
+                    icon: Icons.link_rounded,
+                  ),
+                  validator: (value) {
+                    final v = value?.trim() ?? '';
+                    if (v.isEmpty) return null;
+                    final uri = Uri.tryParse(v);
+                    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+                      return 'Enter a valid link, starting with https://';
+                    }
+                    return null;
+                  },
+                ),
+                // No notes upload here any more. A lesson that already has a
+                // note keeps it: _noteUrl is resent unchanged on save.
                 const SizedBox(height: 16),
                 ],
 
-                const _FieldLabel('Access Type'),
-                const SizedBox(height: 8),
-                Row(
-                  children: LessonAccessType.values.map((a) {
-                    final isSelected = a == _accessType;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(a.apiValue),
-                        avatar: Icon(
-                          a == LessonAccessType.premium ? Icons.workspace_premium_rounded : Icons.lock_open_rounded,
-                          size: 15,
-                          color: isSelected ? Colors.white : LmsColors.textDark,
-                        ),
-                        selected: isSelected,
-                        onSelected: (_) => _setAccessType(a),
-                        labelStyle: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                          color: isSelected ? Colors.white : LmsColors.textDark,
-                        ),
-                        selectedColor: LmsColors.primary,
-                        backgroundColor: LmsColors.bg,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          side: BorderSide(color: isSelected ? LmsColors.primary : LmsColors.border),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-
-                if (_accessType == LessonAccessType.premium) ...[
-                  const SizedBox(height: 16),
-                  const _FieldLabel('Required Plans'),
-                  const SizedBox(height: 6),
-                  _planPicker(),
-                ],
-                const SizedBox(height: 16),
-
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: LmsColors.bg,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: LmsColors.border),
-                  ),
-                  child: Material(
-                  color: Colors.transparent,
-                  child: SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: _isFreePreview,
-                    onChanged: (value) => setState(() => _isFreePreview = value),
-                    activeColor: LmsColors.success,
-                    title: const Text('Free Preview', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-                    subtitle: Text(
-                      _isFreePreview
-                          ? 'Visible to everyone, even without a subscription'
-                          : 'Requires an active subscription (default)',
-                      style: const TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
-                    ),
-                  ),
-                ),
-                ),
+                // Everything about who can see this lesson - access type, the
+                // required plans and the free-preview exception - is decided
+                // once, on the course. None of it is per video, per quiz or
+                // per note any more.
 
                 if (provider.errorMessage != null) ...[
                   const SizedBox(height: 14),

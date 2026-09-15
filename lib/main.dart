@@ -66,6 +66,18 @@ class MyApp extends StatelessWidget {
             surfaceTintColor: Colors.transparent,
           ),
           cardTheme: const CardThemeData(surfaceTintColor: Colors.transparent),
+          // A DropdownButton menu falls back to canvasColor, which under
+          // Material 3 is the tinted surface rather than white - so every
+          // dropdown in the panel opened lilac-grey over white fields.
+          canvasColor: LmsColors.surface,
+          dropdownMenuTheme: const DropdownMenuThemeData(
+            menuStyle: MenuStyle(
+              backgroundColor:
+                  WidgetStatePropertyAll<Color>(LmsColors.surface),
+              surfaceTintColor:
+                  WidgetStatePropertyAll<Color>(Colors.transparent),
+            ),
+          ),
         ),
         home: AdminLoginScreen(),
       ),

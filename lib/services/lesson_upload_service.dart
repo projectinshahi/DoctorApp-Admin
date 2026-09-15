@@ -4,10 +4,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 
 import '../core/const/local_storegae.dart';
 import '../core/const/api_constant.dart';
+import 'upload_media_type.dart';
 
 class UploadResult {
   final bool isSuccess;
@@ -70,44 +70,6 @@ class LessonUploadService {
     return 'Failed to $failureVerb (status $statusCode)';
   }
 
-  /// Maps a file extension to its correct MIME type. Without this, the
-  /// multipart request defaults to application/octet-stream, which the
-  /// backend's multer fileFilter rejects even for genuinely valid files.
-  MediaType _mediaTypeFor(String filename) {
-    final ext = filename.toLowerCase().split('.').last;
-    switch (ext) {
-    // Images
-      case 'jpg':
-      case 'jpeg':
-        return MediaType('image', 'jpeg');
-      case 'png':
-        return MediaType('image', 'png');
-      case 'webp':
-        return MediaType('image', 'webp');
-    // Video
-      case 'mp4':
-        return MediaType('video', 'mp4');
-      case 'mov':
-        return MediaType('video', 'quicktime');
-      case 'mkv':
-        return MediaType('video', 'x-matroska');
-      case 'webm':
-        return MediaType('video', 'webm');
-    // Documents
-      case 'pdf':
-        return MediaType('application', 'pdf');
-      case 'doc':
-        return MediaType('application', 'msword');
-      case 'docx':
-        return MediaType(
-          'application',
-          'vnd.openxmlformats-officedocument.wordprocessingml.document',
-        );
-      default:
-        return MediaType('application', 'octet-stream');
-    }
-  }
-
   // ── Uploads ────────────────────────────────────────────────────────
 
   Future<UploadResult> uploadVideo(Uint8List bytes, String filename) async {
@@ -167,7 +129,7 @@ class LessonUploadService {
           fieldName,
           bytes,
           filename: filename,
-          contentType: _mediaTypeFor(filename), // 👈 the actual fix
+          contentType: uploadMediaType(filename),
         ));
 
       final streamedResponse = await request.send().timeout(const Duration(seconds: 60));

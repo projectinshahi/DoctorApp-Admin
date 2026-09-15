@@ -36,11 +36,7 @@ class StudentDetailScreen extends StatefulWidget {
   /// re-read the row instead of keeping a stale chip.
   final Future<void> Function()? onChanged;
 
-  const StudentDetailScreen({
-    super.key,
-    required this.student,
-    this.onChanged,
-  });
+  const StudentDetailScreen({super.key, required this.student, this.onChanged});
 
   @override
   State<StudentDetailScreen> createState() => _StudentDetailScreenState();
@@ -66,8 +62,6 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
   /// True once the status changed, so the list behind can refresh on pop
   /// rather than showing a stale chip.
   bool _changed = false;
-
-  bool get _isActive => _student.statusValue == StudentStatus.verified;
 
   String get _displayName {
     final name = _student.name?.trim();
@@ -126,8 +120,18 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
   String _joined() {
     final d = _student.createdAt;
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${d.day} ${months[d.month - 1]} ${d.year}';
   }
@@ -191,60 +195,85 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
         padding: EdgeInsets.zero,
         children: [
           _hero(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _progressSection(),
-                const SizedBox(height: 24),
+          // Read on a phone and on a full-width admin browser window. Left
+          // unbounded the account rows stretch to a metre of whitespace with a
+          // value marooned at each end, so the column stops growing and
+          // centres instead.
+          _centred(
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _progressSection(),
+                  const SizedBox(height: 24),
 
-                const _SectionLabel('Account'),
-                const SizedBox(height: 10),
-                _InfoCard(
-                  rows: [
-                    _InfoRow('Email', _student.email,
-                        icon: Icons.mail_outline_rounded),
-                    _InfoRow(
-                      'Phone',
-                      _student.phone?.trim().isNotEmpty == true
-                          ? _student.phone!
-                          : 'Not provided',
-                      icon: Icons.phone_outlined,
-                      muted: _student.phone?.trim().isNotEmpty != true,
-                    ),
-                    _InfoRow('Registered', _joined(),
-                        icon: Icons.event_outlined),
-                    _InfoRow(
-                      'Account status',
-                      _student.statusLabel,
-                      icon: Icons.verified_user_outlined,
-                      valueColor: statusColor(_student),
-                    ),
-                    _InfoRow('Sessions', _sessionLine(),
+                  const _SectionLabel('Account'),
+                  const SizedBox(height: 10),
+                  _InfoCard(
+                    rows: [
+                      _InfoRow(
+                        'Email',
+                        _student.email,
+                        icon: Icons.mail_outline_rounded,
+                      ),
+                      _InfoRow(
+                        'Phone',
+                        _student.phone?.trim().isNotEmpty == true
+                            ? _student.phone!
+                            : 'Not provided',
+                        icon: Icons.phone_outlined,
+                        muted: _student.phone?.trim().isNotEmpty != true,
+                      ),
+                      _InfoRow(
+                        'Registered',
+                        _joined(),
+                        icon: Icons.event_outlined,
+                      ),
+                      _InfoRow(
+                        'Account status',
+                        _student.statusLabel,
+                        icon: Icons.verified_user_outlined,
+                        valueColor: statusColor(_student),
+                      ),
+                      _InfoRow(
+                        'Sessions',
+                        _sessionLine(),
                         icon: Icons.devices_outlined,
-                        muted: _detail?.isLoggedIn != true),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                _accountActions(),
-                const SizedBox(height: 24),
+                        muted: _detail?.isLoggedIn != true,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  _accountActions(),
+                  const SizedBox(height: 24),
 
-                const _SectionLabel('Selected course'),
-                const SizedBox(height: 10),
-                _courseCard(),
-                const SizedBox(height: 24),
+                  const _SectionLabel('Selected course'),
+                  const SizedBox(height: 10),
+                  _courseCard(),
+                  const SizedBox(height: 24),
 
-                const _SectionLabel('Subscription'),
-                const SizedBox(height: 10),
-                _subscriptionSection(),
-              ],
+                  const _SectionLabel('Subscription'),
+                  const SizedBox(height: 10),
+                  _subscriptionSection(),
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
   }
+
+  /// The page's reading width. Everything below the hero lines up inside it.
+  static const _maxContentWidth = 900.0;
+
+  Widget _centred(Widget child) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+      child: child,
+    ),
+  );
 
   // ── Account actions ──────────────────────────────────────────────
 
@@ -268,8 +297,11 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
   }
 
   Future<void> _toggleBlocked() async {
-    final updated =
-        await confirmSetBlocked(context, _student, blocked: !_student.isBlocked);
+    final updated = await confirmSetBlocked(
+      context,
+      _student,
+      blocked: !_student.isBlocked,
+    );
     if (updated == null || !mounted) return;
 
     setState(() {
@@ -335,11 +367,13 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
   // ── Hero ─────────────────────────────────────────────────────────
 
   Widget _hero() {
-    final initial =
-        _displayName.trim().isEmpty ? '?' : _displayName.trim()[0].toUpperCase();
+    final initial = _displayName.trim().isEmpty
+        ? '?'
+        : _displayName.trim()[0].toUpperCase();
     final lastActive = _detail?.progress.lastActivityAt;
 
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 96, 20, 26),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -352,76 +386,86 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
           bottomRight: Radius.circular(26),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 62,
-                height: 62,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.35), width: 1.5),
-                ),
-                child: Text(
-                  initial,
-                  style: const TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
+      // The gradient runs the full width; the name and chips inside it sit on
+      // the same column as everything below, or the header drifts away from
+      // the page it belongs to.
+      child: _centred(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 62,
+                  height: 62,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.35),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Text(
+                    initial,
+                    style: const TextStyle(
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _displayName,
-                      style: const TextStyle(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
+                const SizedBox(width: 15),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _displayName,
+                        style: const TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      _student.email,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.78),
+                      const SizedBox(height: 3),
+                      Text(
+                        _student.email,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.78),
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _HeroChip(
-                icon: statusIcon(_student),
-                label: _student.statusLabel.toUpperCase(),
-              ),
-              _HeroChip(icon: Icons.badge_outlined, label: 'ID #${_student.id}'),
-              if (lastActive != null)
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
                 _HeroChip(
-                  icon: Icons.schedule_rounded,
-                  label: 'Active ${formatStamp(lastActive)}',
+                  icon: statusIcon(_student),
+                  label: _student.statusLabel.toUpperCase(),
                 ),
-            ],
-          ),
-        ],
+                _HeroChip(
+                  icon: Icons.badge_outlined,
+                  label: 'ID #${_student.id}',
+                ),
+                if (lastActive != null)
+                  _HeroChip(
+                    icon: Icons.schedule_rounded,
+                    label: 'Active ${relativeStamp(lastActive)}',
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -490,7 +534,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
                     title: 'Lessons',
                     block: p.lessons,
                     chapters: detail.chapters,
-                    noItemsNote: 'The API did not return any chapters for this '
+                    noItemsNote:
+                        'The API did not return any chapters for this '
                         'student, so there is no per-lesson breakdown.',
                   ),
                 ),
@@ -502,7 +547,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
                   onTap: () => _openBreakdown(
                     title: 'Videos',
                     block: p.videos,
-                    noItemsNote: 'This endpoint reports video progress as '
+                    noItemsNote:
+                        'This endpoint reports video progress as '
                         'totals only - there is no per-video list to show.',
                   ),
                 ),
@@ -514,7 +560,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
                   onTap: () => _openBreakdown(
                     title: 'Notes',
                     block: p.notes,
-                    noItemsNote: 'This endpoint reports note progress as '
+                    noItemsNote:
+                        'This endpoint reports note progress as '
                         'totals only - there is no per-note list to show.',
                   ),
                 ),
@@ -549,7 +596,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
             onTap: () => _openBreakdown(
               title: 'Question bank',
               block: p.qbank,
-              noItemsNote: 'Question bank activity is reported as totals only '
+              noItemsNote:
+                  'Question bank activity is reported as totals only '
                   '- the individual questions this student answered are not '
                   'returned by this endpoint.',
             ),
@@ -557,16 +605,28 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
               // Distinct questions, not answer rows: retakes are unlimited, so
               // counting rows would report a student who retook one quiz five
               // times as having seen five times the bank.
-              _InfoRow('Questions attempted',
-                  '${p.qbank['attempted'] ?? 0} distinct',
-                  icon: Icons.quiz_outlined),
-              _InfoRow('Correct', '${p.qbank['correct'] ?? 0}',
-                  icon: Icons.check_circle_outline_rounded,
-                  valueColor: LmsColors.success),
-              _InfoRow('Wrong', '${p.qbank['wrong'] ?? 0}',
-                  icon: Icons.cancel_outlined, valueColor: LmsColors.error),
-              _InfoRow('Accuracy', '${p.qbank['accuracy'] ?? 0}%',
-                  icon: Icons.percent_rounded),
+              _InfoRow(
+                'Questions attempted',
+                '${p.qbank['attempted'] ?? 0} distinct',
+                icon: Icons.quiz_outlined,
+              ),
+              _InfoRow(
+                'Correct',
+                '${p.qbank['correct'] ?? 0}',
+                icon: Icons.check_circle_outline_rounded,
+                valueColor: LmsColors.success,
+              ),
+              _InfoRow(
+                'Wrong',
+                '${p.qbank['wrong'] ?? 0}',
+                icon: Icons.cancel_outlined,
+                valueColor: LmsColors.error,
+              ),
+              _InfoRow(
+                'Accuracy',
+                '${p.qbank['accuracy'] ?? 0}%',
+                icon: Icons.percent_rounded,
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -582,12 +642,21 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
               noItemsNote: 'No test attempts were returned for this student.',
             ),
             rows: [
-              _InfoRow('Tests attempted', '${p.tests['attempted'] ?? 0}',
-                  icon: Icons.fact_check_outlined),
-              _InfoRow('Submitted', '${p.tests['submitted'] ?? 0}',
-                  icon: Icons.assignment_turned_in_outlined),
-              _InfoRow('Best score', '${p.tests['bestScore'] ?? 0}',
-                  icon: Icons.emoji_events_outlined),
+              _InfoRow(
+                'Tests attempted',
+                '${p.tests['attempted'] ?? 0}',
+                icon: Icons.fact_check_outlined,
+              ),
+              _InfoRow(
+                'Submitted',
+                '${p.tests['submitted'] ?? 0}',
+                icon: Icons.assignment_turned_in_outlined,
+              ),
+              _InfoRow(
+                'Best score',
+                '${p.tests['bestScore'] ?? 0}',
+                icon: Icons.emoji_events_outlined,
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -597,10 +666,15 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
           _InfoCard(
             rows: [
               _InfoRow(
-                  'Bookmarked questions', '${p.bookmarks['questions'] ?? 0}',
-                  icon: Icons.bookmark_outline_rounded),
-              _InfoRow('Bookmarked lessons', '${p.bookmarks['lessons'] ?? 0}',
-                  icon: Icons.bookmarks_outlined),
+                'Bookmarked questions',
+                '${p.bookmarks['questions'] ?? 0}',
+                icon: Icons.bookmark_outline_rounded,
+              ),
+              _InfoRow(
+                'Bookmarked lessons',
+                '${p.bookmarks['lessons'] ?? 0}',
+                icon: Icons.bookmarks_outlined,
+              ),
             ],
           ),
       ],
@@ -628,8 +702,9 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
           'Access',
           course.isPremium ? 'Premium' : 'Free',
           icon: Icons.workspace_premium_outlined,
-          valueColor:
-              course.isPremium ? const Color(0xFFB8860B) : LmsColors.success,
+          valueColor: course.isPremium
+              ? const Color(0xFFB8860B)
+              : LmsColors.success,
         ),
         _InfoRow(
           'Course status',
@@ -654,7 +729,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
       return const _NoticeCard(
         icon: Icons.lock_open_rounded,
         color: LmsColors.success,
-        text: 'This is a free course - the student needs no subscription to '
+        text:
+            'This is a free course - the student needs no subscription to '
             'open its lessons.',
       );
     }
@@ -666,7 +742,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
         // yet report whether this student paid, or when their access ends.
         const _NoticeCard(
           icon: Icons.info_outline_rounded,
-          text: 'Payment state and expiry are not reported by the API yet. '
+          text:
+              'Payment state and expiry are not reported by the API yet. '
               'The plans below are what this course offers, not what this '
               'student holds.',
         ),
@@ -696,7 +773,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
           const _NoticeCard(
             icon: Icons.report_problem_outlined,
             color: LmsColors.error,
-            text: 'This premium course has no plans, so nobody can subscribe '
+            text:
+                'This premium course has no plans, so nobody can subscribe '
                 'to it at all.',
           )
         else
@@ -714,25 +792,27 @@ class _HeroChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.16),
-          borderRadius: BorderRadius.circular(9),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(9),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: Colors.white),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: Colors.white),
-            const SizedBox(width: 6),
-            Text(label,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                )),
-          ],
-        ),
-      );
+      ],
+    ),
+  );
 }
 
 class _PlanRow extends StatelessWidget {
@@ -769,13 +849,18 @@ class _PlanRow extends StatelessWidget {
                 Text(
                   plan.title,
                   style: const TextStyle(
-                      fontSize: 13.5, fontWeight: FontWeight.w700),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 3),
                 Text(
                   'AED ${plan.price.toStringAsFixed(plan.price % 1 == 0 ? 0 : 2)}'
                   ' · $_duration',
-                  style: const TextStyle(fontSize: 12, color: LmsColors.textGrey),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: LmsColors.textGrey,
+                  ),
                 ),
               ],
             ),
@@ -808,9 +893,9 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(
-        text,
-        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-      );
+    text,
+    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+  );
 }
 
 class _InfoRow {
@@ -829,6 +914,19 @@ class _InfoRow {
   });
 }
 
+/// A list of label/value rows, aligned across every card on the page.
+///
+/// **The value column is the point.** Account, Performance and Course all use
+/// this card, and their values only read as one column if they end at the same
+/// x. Two things used to break that:
+///
+///   * the chevron on a tappable card pushed its values 20px left, so the
+///     Performance rows sat out of line with the Account rows directly below;
+///   * the label was a bare Text after a Spacer, so a long label and a long
+///     value together overflowed instead of ellipsising.
+///
+/// So the chevron gutter is reserved on every card whether or not one is
+/// drawn, and the label takes the slack.
 class _InfoCard extends StatelessWidget {
   final List<_InfoRow> rows;
 
@@ -837,56 +935,85 @@ class _InfoCard extends StatelessWidget {
 
   const _InfoCard({required this.rows, this.onTap});
 
+  /// Held open on non-tappable cards too, so every value on the page ends at
+  /// the same x.
+  static const _chevronGutter = 20.0;
+
+  /// Below this a label and its value cannot share a line without one of them
+  /// being cut to nothing, so they stack instead.
+  static const _stackBelow = 380.0;
+
   @override
   Widget build(BuildContext context) {
     final card = Container(
       decoration: lmsCard,
-      child: Column(
-        children: [
-          for (var i = 0; i < rows.length; i++) ...[
-            if (i > 0) const Divider(height: 1, color: LmsColors.border),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-              child: Row(
-                children: [
-                  Icon(rows[i].icon, size: 17, color: LmsColors.textGrey),
-                  const SizedBox(width: 11),
-                  Text(
-                    rows[i].label,
-                    style: const TextStyle(
-                        fontSize: 12.5, color: LmsColors.textGrey),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stacked = constraints.maxWidth < _stackBelow;
+
+          return Column(
+            children: [
+              for (var i = 0; i < rows.length; i++) ...[
+                if (i > 0) const Divider(height: 1, color: LmsColors.border),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
                   ),
-                  const Spacer(),
-                  Flexible(
-                    child: Text(
-                      rows[i].value,
-                      textAlign: TextAlign.right,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight:
-                            rows[i].muted ? FontWeight.w400 : FontWeight.w700,
-                        color: rows[i].muted
-                            ? LmsColors.textGrey
-                            : rows[i].valueColor ?? LmsColors.textDark,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1),
+                        child: Icon(
+                          rows[i].icon,
+                          size: 17,
+                          color: LmsColors.textGrey,
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: stacked
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _label(rows[i]),
+                                  const SizedBox(height: 3),
+                                  _value(rows[i], align: TextAlign.left),
+                                ],
+                              )
+                            : Row(
+                                children: [
+                                  Flexible(child: _label(rows[i])),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _value(
+                                      rows[i],
+                                      align: TextAlign.right,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                      SizedBox(
+                        width: _chevronGutter,
+                        // Only the first row carries the chevron, so a
+                        // tappable card says so once instead of on every line.
+                        child: onTap != null && i == 0
+                            ? const Icon(
+                                Icons.chevron_right_rounded,
+                                size: 18,
+                                color: LmsColors.textGrey,
+                              )
+                            : null,
+                      ),
+                    ],
                   ),
-                  // Only the first row carries the chevron, so a tappable card
-                  // says so once instead of on every line.
-                  if (onTap != null)
-                    SizedBox(
-                      width: 20,
-                      child: i == 0
-                          ? const Icon(Icons.chevron_right_rounded,
-                              size: 18, color: LmsColors.textGrey)
-                          : null,
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ],
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
 
@@ -897,6 +1024,27 @@ class _InfoCard extends StatelessWidget {
       child: card,
     );
   }
+
+  Widget _label(_InfoRow row) => Text(
+    row.label,
+    maxLines: 2,
+    overflow: TextOverflow.ellipsis,
+    style: const TextStyle(fontSize: 12.5, color: LmsColors.textGrey),
+  );
+
+  Widget _value(_InfoRow row, {required TextAlign align}) => Text(
+    row.value,
+    textAlign: align,
+    maxLines: 2,
+    overflow: TextOverflow.ellipsis,
+    style: TextStyle(
+      fontSize: 13,
+      fontWeight: row.muted ? FontWeight.w400 : FontWeight.w700,
+      color: row.muted
+          ? LmsColors.textGrey
+          : row.valueColor ?? LmsColors.textDark,
+    ),
+  );
 }
 
 class _NoticeCard extends StatelessWidget {

@@ -62,6 +62,34 @@ class TopicListResult {
       TopicListResult._(isSuccess: false, errorMessage: message);
 }
 
+/// The subjects that actually apply to one course.
+///
+/// [fallback] is the important half. `true` means the course has no subject
+/// linked to it at all, so the API returned every subject rather than an empty
+/// list. Without surfacing that, the dropdown looks arbitrary and an admin has
+/// no way to tell a curated list from a catch-all one.
+class CourseSubjectsResult {
+  final bool isSuccess;
+  final List<Subject> subjects;
+  final bool fallback;
+  final String? errorMessage;
+
+  const CourseSubjectsResult._({
+    required this.isSuccess,
+    this.subjects = const [],
+    this.fallback = false,
+    this.errorMessage,
+  });
+
+  factory CourseSubjectsResult.success(List<Subject> subjects,
+          {required bool fallback}) =>
+      CourseSubjectsResult._(
+          isSuccess: true, subjects: subjects, fallback: fallback);
+
+  factory CourseSubjectsResult.failure(String message) =>
+      CourseSubjectsResult._(isSuccess: false, errorMessage: message);
+}
+
 /// The question bank's taxonomy. Topics list and create under their subject
 /// but update by their own id - that's how the API is routed.
 ///
@@ -147,6 +175,52 @@ class SubjectTopicService {
       return SubjectListResult.failure('Unexpected response from server.');
     } catch (e) {
       return SubjectListResult.failure('Something went wrong: $e');
+    }
+  }
+
+  /// GET /api/admin/courses/:courseId/subjects?courseTypeId=
+  ///
+  /// Scoped, unlike [getSubjects], which returns every subject in the system
+  /// regardless of course. Passing [courseTypeId] narrows it to one exam.
+  ///
+  /// Each subject carries a `source` saying whether it came from the course
+  /// link or from one of its quizzes. Not read here - it changes nothing about
+  /// which subject to send.
+  Future<CourseSubjectsResult> getCourseSubjects({
+    required int courseId,
+    int? courseTypeId,
+  }) async {
+    final adminToken = await _getToken();
+    if (adminToken == null) {
+      return CourseSubjectsResult.failure('Session expired. Please log in again.');
+    }
+
+    final uri = Uri.parse('$baseUrl/admin/courses/$courseId/subjects').replace(
+      queryParameters:
+          courseTypeId == null ? null : {'courseTypeId': '$courseTypeId'},
+    );
+
+    try {
+      final response =
+          await http.get(uri, headers: _headers(adminToken)).timeout(_timeout);
+      final decoded = _tryDecode(response.body);
+
+      if (response.statusCode == 200) {
+        return CourseSubjectsResult.success(
+          parseSubjects(decoded),
+          fallback: decoded is Map && decoded['fallback'] == true,
+        );
+      }
+      return CourseSubjectsResult.failure(
+        _messageFrom(decoded, response.statusCode, 'load subjects'),
+      );
+    } on http.ClientException {
+      return CourseSubjectsResult.failure(
+          'Network error. Please check your connection.');
+    } on FormatException {
+      return CourseSubjectsResult.failure('Unexpected response from server.');
+    } catch (e) {
+      return CourseSubjectsResult.failure('Something went wrong: $e');
     }
   }
 

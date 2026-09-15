@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import 'upload_media_type.dart';
+
 import '../core/const/api_constant.dart';
 import '../core/const/local_storegae.dart';
 
@@ -110,8 +112,16 @@ class QuestionImageService {
       )
         ..headers['Authorization'] = 'Bearer $token'
         // One file per request, and the field is named "image".
-        ..files.add(http.MultipartFile.fromBytes('image', bytes,
-            filename: filename));
+        //
+        // contentType is not optional in practice: without it the part goes up
+        // as application/octet-stream and the server's fileFilter refuses a
+        // valid PNG.
+        ..files.add(http.MultipartFile.fromBytes(
+          'image',
+          bytes,
+          filename: filename,
+          contentType: uploadMediaType(filename),
+        ));
 
       final streamed = await request.send().timeout(_timeout);
       final response = await http.Response.fromStream(streamed);
