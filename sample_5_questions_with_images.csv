@@ -1,6 +1,0 @@
-question_text,question_image_url,option_a,option_b,option_c,option_d,correct_option,explanation,section
-"Which shape is shown?",https://upload.wikimedia.org/wikipedia/commons/1/11/Test-Logo.svg,Circle,Square,Triangle,Hexagon,C,"The figure is a triangle.",Figures
-"A 54-year-old, previously well, presents with chest pain. Next step?",,ECG,CT head,Ultrasound,X-ray,A,"ECG first in chest pain.",Clinical
-,https://upload.wikimedia.org/wikipedia/commons/1/11/Test-Logo.svg,Circle,Square,Triangle,Hexagon,C,"Image-only stem: no question_text at all.",Figures
-"Which is the largest planet?",,Mars,Jupiter,Venus,Mercury,B,,General
-"What does SVG stand for?",,Simple Vector Graph,Scalable Vector Graphics,Static Visual Grid,Scaled Vertex Group,B,,General

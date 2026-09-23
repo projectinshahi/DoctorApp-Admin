@@ -103,6 +103,10 @@ class LessonDetail {
   /// lessons can still show what they used to point at. Never written back.
   final String? content;
 
+  /// Optional, and for filtering only. A quiz lesson with none set borrows
+  /// its quiz's subject server-side.
+  final int? subjectId;
+
   /// The linked Quiz, set only when type == 'quiz'.
   final int? quizId;
 
@@ -143,6 +147,7 @@ class LessonDetail {
     this.notePublicId,
     this.noteFileType,
     this.content,
+    this.subjectId,
     this.quizId,
     this.quiz,
     required this.displayOrder,
@@ -172,6 +177,7 @@ class LessonDetail {
       notePublicId: json['notePublicId'] as String?,
       noteFileType: json['noteFileType'] as String?,
       content: json['content'] as String?,
+      subjectId: (json['subjectId'] as num?)?.toInt(),
       quizId: (json['quizId'] as num?)?.toInt(),
       quiz: json['quiz'] is Map<String, dynamic>
           ? Quiz.fromJson(json['quiz'] as Map<String, dynamic>)

@@ -3,13 +3,12 @@ import 'package:flutter/material.dart';
 
 import '../../core/theam/theam_dart.dart';
 import '../../models/rapid_recall_model.dart';
-import '../../services/lesson_upload_service.dart';
 import '../../services/question_image_service.dart';
 import '../../widget/question_image_view.dart';
 
 /// The revision notes in a deck, as reorderable rows.
 ///
-/// Every note can carry an image, typed text, an attached PDF link, or any mix.
+/// Every note can carry an image, typed text, or both.
 /// **The image is optional** - only a note with nothing in it at all is empty,
 /// and an empty row is simply dropped on save.
 ///
@@ -40,43 +39,70 @@ class RecallNoteList extends StatefulWidget {
 
 class _RecallNoteListState extends State<RecallNoteList> {
   final _imageService = QuestionImageService();
-  final _fileService = LessonUploadService();
 
-  /// One controller per row, keyed by identity rather than index so a reorder
-  /// moves the text with its card instead of leaving it behind.
-  final _notes = <RapidRecallCard, TextEditingController>{};
+  /// A title and a description controller per row, keyed by identity rather
+  /// than index so a reorder moves the text with its card instead of leaving
+  /// it behind.
+  final _fields =
+      <RapidRecallCard, ({TextEditingController title, TextEditingController body})>{};
 
   int? _uploadingAt;
-  int? _attachingAt;
 
   @override
   void dispose() {
-    for (final controller in _notes.values) {
-      controller.dispose();
+    for (final pair in _fields.values) {
+      pair.title.dispose();
+      pair.body.dispose();
     }
     super.dispose();
   }
 
-  TextEditingController _controllerFor(RapidRecallCard card) =>
-      _notes.putIfAbsent(card, () => TextEditingController(text: card.note ?? ''));
+  ({TextEditingController title, TextEditingController body}) _fieldsFor(
+          RapidRecallCard card) =>
+      _fields.putIfAbsent(
+        card,
+        () => (
+          title: TextEditingController(text: card.noteTitle),
+          body: TextEditingController(text: card.noteBody),
+        ),
+      );
+
+  /// Both halves go back into the single `note` field - see composeNote.
+  void _onTextChanged(int index) {
+    final card = widget.cards[index];
+    final pair = _fieldsFor(card);
+    _replace(
+      index,
+      card.copyWith(
+        note: RapidRecallCard.composeNote(pair.title.text, pair.body.text),
+      ),
+    );
+  }
 
   void _replace(int index, RapidRecallCard card) {
     final next = [...widget.cards];
     final old = next[index];
-    // The controller follows the card object, which copyWith replaces.
-    final controller = _notes.remove(old);
-    if (controller != null) _notes[card] = controller;
+    // The controllers follow the card object, which copyWith replaces.
+    final pair = _fields.remove(old);
+    if (pair != null) _fields[card] = pair;
     next[index] = card;
     widget.onChanged(next);
   }
 
+  /// A new note goes on TOP.
+  ///
+  /// Someone adding to a deck of forty is writing the newest thing, and the
+  /// one they just made should not be waiting for them at the bottom of a long
+  /// scroll. Drag still reorders, so a deliberate order is one drag away.
   void _add() {
-    widget.onChanged([...widget.cards, const RapidRecallCard()]);
+    widget.onChanged([const RapidRecallCard(), ...widget.cards]);
   }
 
   void _remove(int index) {
     final next = [...widget.cards];
-    _notes.remove(next[index])?.dispose();
+    final pair = _fields.remove(next[index]);
+    pair?.title.dispose();
+    pair?.body.dispose();
     next.removeAt(index);
     widget.onChanged(next);
   }
@@ -119,44 +145,6 @@ class _RecallNoteListState extends State<RecallNoteList> {
         imagePublicId: result.image!.publicId,
       ),
     );
-  }
-
-  /// Attaches a PDF or DOC to one note.
-  ///
-  /// A note row on the wire is `{ imageUrl, note }` and `note` is a string -
-  /// there is no per-note file field - so the uploaded link is written into
-  /// that text, in front of the admin rather than into hidden state. What they
-  /// see in the box is exactly what is saved.
-  Future<void> _attachFile(int index) async {
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['pdf', 'doc', 'docx'],
-      withData: true,
-    );
-    if (picked == null || picked.files.single.bytes == null) return;
-
-    setState(() => _attachingAt = index);
-    final result = await _fileService.uploadNote(
-      picked.files.single.bytes!,
-      picked.files.single.name,
-    );
-    if (!mounted) return;
-    setState(() => _attachingAt = null);
-
-    if (!result.isSuccess || result.url == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.errorMessage ?? 'That upload failed')),
-      );
-      return;
-    }
-
-    final card = widget.cards[index];
-    final existing = (card.note ?? '').trim();
-    final merged =
-        existing.isEmpty ? result.url! : '$existing\n${result.url!}';
-
-    _controllerFor(card).text = merged;
-    _replace(index, card.copyWith(note: merged));
   }
 
   Future<void> _clearImage(int index) async {
@@ -216,11 +204,9 @@ class _RecallNoteListState extends State<RecallNoteList> {
                   card: card,
                   enabled: widget.enabled,
                   uploading: _uploadingAt == index,
-                  attaching: _attachingAt == index,
-                  onAttachFile: () => _attachFile(index),
-                  noteController: _controllerFor(card),
-                  onNoteChanged: (text) =>
-                      _replace(index, card.copyWith(note: text)),
+                  titleController: _fieldsFor(card).title,
+                  bodyController: _fieldsFor(card).body,
+                  onTextChanged: () => _onTextChanged(index),
                   onPickImage: () => _pickImage(index),
                   onClearImage: () => _clearImage(index),
                   onDelete: () => _remove(index),
@@ -238,11 +224,10 @@ class _NoteRow extends StatelessWidget {
   final RapidRecallCard card;
   final bool enabled;
   final bool uploading;
-  final bool attaching;
-  final TextEditingController noteController;
-  final ValueChanged<String> onNoteChanged;
+  final TextEditingController titleController;
+  final TextEditingController bodyController;
+  final VoidCallback onTextChanged;
   final VoidCallback onPickImage;
-  final VoidCallback onAttachFile;
   final VoidCallback onClearImage;
   final VoidCallback onDelete;
 
@@ -251,11 +236,10 @@ class _NoteRow extends StatelessWidget {
     required this.card,
     required this.enabled,
     required this.uploading,
-    required this.attaching,
-    required this.noteController,
-    required this.onNoteChanged,
+    required this.titleController,
+    required this.bodyController,
+    required this.onTextChanged,
     required this.onPickImage,
-    required this.onAttachFile,
     required this.onClearImage,
     required this.onDelete,
   });
@@ -313,37 +297,25 @@ class _NoteRow extends StatelessWidget {
               final noteField = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Note  ·  optional',
-                      style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
-                          color: LmsColors.textGrey)),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: noteController,
+                  _LabelledField(
+                    label: 'Title  ·  optional',
+                    controller: titleController,
                     enabled: enabled,
+                    onChanged: onTextChanged,
+                    hint: 'Pseudo gout',
+                    minLines: 1,
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 12),
+                  _LabelledField(
+                    label: 'Description  ·  optional',
+                    controller: bodyController,
+                    enabled: enabled,
+                    onChanged: onTextChanged,
+                    hint: 'Type the answer here. Leave blank if the image '
+                        'says it all.',
                     minLines: 4,
                     maxLines: 8,
-                    onChanged: onNoteChanged,
-                    style: const TextStyle(fontSize: 13, height: 1.4),
-                    decoration: InputDecoration(
-                      hintText: 'Type the answer here, or attach a PDF below. '
-                          'Leave blank if the image says it all.',
-                      hintStyle: const TextStyle(
-                          fontSize: 12.5, color: LmsColors.textGrey),
-                      filled: true,
-                      fillColor: LmsColors.bg,
-                      contentPadding: const EdgeInsets.all(12),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(11),
-                        borderSide: const BorderSide(color: LmsColors.border),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(11),
-                        borderSide: const BorderSide(color: LmsColors.border),
-                      ),
-                    ),
                   ),
                 ],
               );
@@ -362,50 +334,81 @@ class _NoteRow extends StatelessWidget {
                 ],
               );
 
-              final attachButton = Align(
-                alignment: Alignment.centerLeft,
-                child: attaching
-                    ? const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : TextButton.icon(
-                        onPressed: enabled ? onAttachFile : null,
-                        icon: const Icon(Icons.attach_file_rounded, size: 16),
-                        label: const Text('Attach PDF or DOC'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: LmsColors.primary,
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 8),
-                          textStyle: const TextStyle(
-                              fontSize: 12.5, fontWeight: FontWeight.w700),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-              );
-
-              // Stacked, always: the figure is read first, then what it means,
-              // then anything attached to it. Side by side put the text at eye
-              // level and the image off to one edge.
+              // Stacked, always: the figure is read first, then what it
+              // means. Side by side put the text at eye level and the
+              // image off to one edge.
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   imageColumn,
                   const SizedBox(height: 14),
                   noteField,
-                  const SizedBox(height: 2),
-                  attachButton,
                 ],
               );
             },
           ),
         ],
       ),
+    );
+  }
+}
+
+class _LabelledField extends StatelessWidget {
+  final String label;
+  final TextEditingController controller;
+  final bool enabled;
+  final VoidCallback onChanged;
+  final String hint;
+  final int minLines;
+  final int maxLines;
+
+  const _LabelledField({
+    required this.label,
+    required this.controller,
+    required this.enabled,
+    required this.onChanged,
+    required this.hint,
+    required this.minLines,
+    required this.maxLines,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+                color: LmsColors.textGrey)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          enabled: enabled,
+          minLines: minLines,
+          maxLines: maxLines,
+          onChanged: (_) => onChanged(),
+          style: const TextStyle(fontSize: 13, height: 1.4),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle:
+                const TextStyle(fontSize: 12.5, color: LmsColors.textGrey),
+            filled: true,
+            fillColor: LmsColors.bg,
+            contentPadding: const EdgeInsets.all(12),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(11),
+              borderSide: const BorderSide(color: LmsColors.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(11),
+              borderSide: const BorderSide(color: LmsColors.border),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -118,17 +118,14 @@ class RapidRecallService {
   /// Every filter is optional, matching the funnel: a deck narrowed only to a
   /// course is as valid as one pinned to a lesson.
   ///
-  /// [unscopedSubject] sends the literal `subjectId=null`, which is how the
-  /// API answers "what applies course-wide?" - distinct from omitting the
-  /// parameter, which matches everything.
+  /// [chapterId] is the subject: chapters are what this form calls subjects.
   Future<RecallListResult> list({
     int? courseId,
     int? courseTypeId,
-    int? subjectId,
+    int? chapterId,
     int? lessonId,
     String? status,
     String? search,
-    bool unscopedSubject = false,
   }) async {
     final token = await _token();
     if (token == null) {
@@ -138,8 +135,7 @@ class RapidRecallService {
     final query = <String, String>{
       if (courseId != null) 'courseId': '$courseId',
       if (courseTypeId != null) 'courseTypeId': '$courseTypeId',
-      if (unscopedSubject) 'subjectId': 'null'
-      else if (subjectId != null) 'subjectId': '$subjectId',
+      if (chapterId != null) 'chapterId': '$chapterId',
       if (lessonId != null) 'lessonId': '$lessonId',
       if (status != null && status.isNotEmpty) 'status': status,
       if (search != null && search.trim().isNotEmpty) 'search': search.trim(),

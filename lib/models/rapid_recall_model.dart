@@ -46,6 +46,39 @@ class RapidRecallCard {
   /// on save rather than sending it, and the server refuses one if it arrives.
   bool get isEmpty => !hasImage && !hasNote;
 
+  /// The note's heading, and the text under it.
+  ///
+  /// **A note row on the wire has ONE text field**, so the title and the
+  /// description share it: title, blank line, description. That stays plain
+  /// text to anything rendering `note` as-is - the student app shows the
+  /// heading as its first line - and it is split back apart here.
+  ///
+  /// Only the FIRST blank line divides them, so a description with paragraphs
+  /// of its own survives. A note with no blank line is all description, which
+  /// is what every note written before titles existed is.
+  String get noteTitle => _splitNote(note).$1;
+  String get noteBody => _splitNote(note).$2;
+
+  static (String, String) _splitNote(String? raw) {
+    final text = (raw ?? '').replaceAll('\r\n', '\n');
+    final gap = text.indexOf('\n\n');
+    if (gap < 0) return ('', text.trim());
+    return (text.substring(0, gap).trim(), text.substring(gap + 2).trim());
+  }
+
+  /// Joins a heading and its text back into the single `note` field.
+  ///
+  /// A title written with no description reads back as a description next time
+  /// the deck is opened: with one field there is nothing recording which half
+  /// it was. A real `title` column on the API would remove that wrinkle.
+  static String composeNote(String title, String body) {
+    final t = title.trim();
+    final b = body.trim();
+    if (t.isEmpty) return b;
+    if (b.isEmpty) return t;
+    return '$t\n\n$b';
+  }
+
   factory RapidRecallCard.fromJson(Map<String, dynamic> json) => RapidRecallCard(
         id: (json['id'] as num?)?.toInt(),
         imageUrl: _clean(json['imageUrl']),
@@ -90,12 +123,13 @@ class RapidRecall {
   /// lessons.
   final int courseId;
   final int? courseTypeId;
-  final int? subjectId;
+  /// The chapter the deck is filed under - what the form calls a subject.
+  final int? chapterId;
   final int? lessonId;
 
   final RecallScopeRef? course;
   final RecallScopeRef? courseType;
-  final RecallScopeRef? subject;
+  final RecallScopeRef? chapter;
   final RecallScopeRef? lesson;
 
   /// One optional PDF or DOC handout for the whole deck.
@@ -114,11 +148,11 @@ class RapidRecall {
     this.status = 'draft',
     this.cardCount = 0,
     this.courseTypeId,
-    this.subjectId,
+    this.chapterId,
     this.lessonId,
     this.course,
     this.courseType,
-    this.subject,
+    this.chapter,
     this.lesson,
     this.noteUrl,
     this.notePublicId,
@@ -134,7 +168,7 @@ class RapidRecall {
   /// stopped narrowing. Built from the resolved objects the API nests on the
   /// deck, so no extra lookups are needed to render a row.
   List<String> get scopeTrail => [
-        for (final ref in [course, courseType, subject, lesson])
+        for (final ref in [course, courseType, chapter, lesson])
           if (ref != null) ref.label,
       ];
 
@@ -155,11 +189,11 @@ class RapidRecall {
               ? ((json['course']['id'] as num?)?.toInt() ?? 0)
               : 0),
       courseTypeId: (json['courseTypeId'] as num?)?.toInt(),
-      subjectId: (json['subjectId'] as num?)?.toInt(),
+      chapterId: (json['chapterId'] as num?)?.toInt(),
       lessonId: (json['lessonId'] as num?)?.toInt(),
       course: RecallScopeRef.fromJson(json['course']),
       courseType: RecallScopeRef.fromJson(json['courseType']),
-      subject: RecallScopeRef.fromJson(json['subject']),
+      chapter: RecallScopeRef.fromJson(json['chapter']),
       lesson: RecallScopeRef.fromJson(json['lesson']),
       noteUrl: _clean(json['noteUrl']),
       notePublicId: _clean(json['notePublicId']),
@@ -175,13 +209,13 @@ class RapidRecall {
 
   /// The write payload for create and update.
   ///
-  /// The three optional scope ids are sent even when null: clearing a subject
+  /// The three optional scope ids are sent even when null: clearing a chapter
   /// has to reach the server as `null`, and omitting the key would leave the
   /// old value in place.
   Map<String, dynamic> toWritePayload() => {
         'courseId': courseId,
         'courseTypeId': courseTypeId,
-        'subjectId': subjectId,
+        'chapterId': chapterId,
         'lessonId': lessonId,
         'title': title.trim(),
         'description': description?.trim(),

@@ -212,6 +212,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
       initialPlanIds: lesson.planIds, // NEW
       initialPlans: lesson.plans, // NEW
       initialDisplayOrder: lesson.displayOrder,
+      initialSubjectId: lesson.subjectId,
     );
 
     if (updated == true && context.mounted) {

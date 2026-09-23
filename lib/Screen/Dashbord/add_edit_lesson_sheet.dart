@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../provider/lesson_upload_provider.dart';
 import '../../services/lesson_services.dart';
+import '../../models/question_bank_model.dart';
+import '../../services/subject_topic_service.dart';
 import '../../services/lesson_upload_service.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../models/quiz_model.dart';
@@ -334,6 +336,7 @@ Future<bool?> showAddEditLessonSheet(
       Set<int> initialPlanIds = const {}, // NEW - multi-plan selection
       List<LessonPlanSummary> initialPlans = const [], // NEW - keeps delisted plans visible
       int? initialDisplayOrder,
+      int? initialSubjectId,
     }) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -364,6 +367,7 @@ Future<bool?> showAddEditLessonSheet(
           initialPlanIds: initialPlanIds, // NEW
           initialPlans: initialPlans, // NEW
           initialDisplayOrder: initialDisplayOrder,
+          initialSubjectId: initialSubjectId,
         ),
       );
     },
@@ -392,6 +396,7 @@ class _AddEditLessonSheet extends StatefulWidget {
   final Set<int> initialPlanIds; // NEW
   final List<LessonPlanSummary> initialPlans; // NEW
   final int? initialDisplayOrder;
+  final int? initialSubjectId;
 
   const _AddEditLessonSheet({
     required this.chapterId,
@@ -415,6 +420,7 @@ class _AddEditLessonSheet extends StatefulWidget {
     this.initialPlanIds = const {}, // NEW
     this.initialPlans = const [], // NEW
     this.initialDisplayOrder,
+    this.initialSubjectId,
   });
 
   @override
@@ -438,6 +444,12 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   /// than silently resetting an existing premium lesson to free.
   late LessonAccessType _accessType;
   late LessonStatus _status; // NEW
+
+  /// Optional, and for filtering only - it does not change what a student
+  /// sees, and a quiz lesson without one falls back to its quiz's subject.
+  int? _subjectId;
+  List<Subject> _subjects = const [];
+  bool _loadingSubjects = false;
 
   // Premium plan picker - a lesson can require any number of plans; empty
   // means "any active subscription".
@@ -513,6 +525,8 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     _isFreePreview = widget.initialIsFreePreview ?? false;
     _accessType = widget.initialAccessType ?? LessonAccessType.free;
     _status = widget.initialStatus ?? LessonStatus.draft; // NEW
+    _subjectId = widget.initialSubjectId;
+    if (widget.courseId != null) _loadSubjects(widget.courseId!);
     _planIds = {...widget.initialPlanIds}; // NEW
 
     _videoUrl = widget.initialVideoUrl;
@@ -566,6 +580,19 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       _videoUrl = trimmed.isEmpty ? null : trimmed;
       _videoPublicId = null;
       _videoRemoved = trimmed.isEmpty && _isEditMode && _hadInitialVideo;
+    });
+  }
+
+  /// The same course-scoped list the Rapid Recall form uses, so the subject
+  /// tagged here is one that form can actually filter by.
+  Future<void> _loadSubjects(int courseId) async {
+    setState(() => _loadingSubjects = true);
+    final result =
+        await SubjectTopicService().getCourseSubjects(courseId: courseId);
+    if (!mounted) return;
+    setState(() {
+      _loadingSubjects = false;
+      _subjects = result.isSuccess ? result.subjects : const [];
     });
   }
 
@@ -795,6 +822,9 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       planIds: _planIds.toList(),
       quizId: _isQuiz ? _linkedQuizId : null,
       removeQuiz: removeQuiz,
+      subjectId: _subjectId,
+      // Cleared rather than omitted: an absent key leaves the old subject.
+      removeSubject: _subjectId == null && widget.initialSubjectId != null,
     )
         : await provider.createLesson(
       chapterId: widget.chapterId,
@@ -814,6 +844,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       status: _status,
       planIds: _planIds.toList(),
       quizId: _isQuiz ? _linkedQuizId : null,
+      subjectId: _subjectId,
     );
 
     if (!mounted) return;
@@ -962,6 +993,52 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                       ),
                     );
                   }).toList(),
+                ),
+                const SizedBox(height: 18),
+
+                const _FieldLabel('Subject (optional)'),
+                const SizedBox(height: 2),
+                Text(
+                  _isQuiz && _subjectId == null
+                      // The filter falls back to the quiz's subject anyway, so
+                      // tagging a quiz lesson by hand is rarely worth it.
+                      ? 'Leave blank and this quiz lesson uses its quiz\'s '
+                          'subject.'
+                      : 'Only used to filter this lesson in the Rapid Recall '
+                          'form. Students see no difference.',
+                  style: const TextStyle(
+                      fontSize: 11.5, color: LmsColors.textGrey),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int?>(
+                  initialValue:
+                      _subjects.any((s) => s.id == _subjectId) ? _subjectId : null,
+                  isExpanded: true,
+                  decoration: _inputDecoration(
+                    widget.courseId == null
+                        ? 'Open this lesson from its course to set a subject'
+                        : _loadingSubjects
+                            ? 'Loading subjects…'
+                            : _subjects.isEmpty
+                                ? 'No subjects on this course'
+                                : 'None',
+                    icon: Icons.category_outlined,
+                  ),
+                  items: [
+                    const DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text('None',
+                          style: TextStyle(color: LmsColors.textGrey)),
+                    ),
+                    for (final subject in _subjects)
+                      DropdownMenuItem<int?>(
+                        value: subject.id,
+                        child: Text(subject.name),
+                      ),
+                  ],
+                  onChanged: _subjects.isEmpty
+                      ? null
+                      : (value) => setState(() => _subjectId = value),
                 ),
 
                 if (_isQuiz) ...[
@@ -1113,53 +1190,3 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   }
 }
 
-Future<bool> confirmAndDeleteLesson(
-    BuildContext context, {
-      required int chapterId,
-      required int lessonId,
-      required String lessonTitle,
-    }) async {
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text('Delete Lesson', style: TextStyle(fontWeight: FontWeight.w800)),
-      content: Text(
-        'Are you sure you want to delete "$lessonTitle"? '
-            'This will permanently remove the lesson along with its video, thumbnail, and notes. '
-            'This action cannot be undone.',
-        style: const TextStyle(fontSize: 13.5),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          style: TextButton.styleFrom(foregroundColor: LmsColors.error),
-          child: const Text('Delete', style: TextStyle(fontWeight: FontWeight.w700)),
-        ),
-      ],
-    ),
-  );
-
-  if (confirmed != true) return false;
-
-  final provider = LessonUpdateProvider();
-  final success = await provider.deleteLesson(chapterId: chapterId, lessonId: lessonId);
-
-  if (!context.mounted) return success;
-
-  if (success) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Lesson deleted successfully')),
-    );
-  } else {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(provider.errorMessage ?? 'Failed to delete lesson')),
-    );
-  }
-
-  return success;
-}

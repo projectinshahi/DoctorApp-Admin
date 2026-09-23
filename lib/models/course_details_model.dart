@@ -1,11 +1,4 @@
-import 'dart:convert';
 import 'lesson_detail_model.dart'; // LessonPlanSummary + shared plan parsers
-
-CourseDetailsResponse courseDetailsResponseFromJson(String str) =>
-    CourseDetailsResponse.fromJson(json.decode(str));
-
-String courseDetailsResponseToJson(CourseDetailsResponse data) =>
-    json.encode(data.toJson());
 
 class CourseDetailsResponse {
   final CourseDetails course;

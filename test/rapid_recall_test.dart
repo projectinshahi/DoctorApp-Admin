@@ -14,7 +14,7 @@ void main() {
       });
 
       expect(deck.courseTypeId, isNull);
-      expect(deck.subjectId, isNull);
+      expect(deck.chapterId, isNull);
       expect(deck.lessonId, isNull);
       expect(deck.breadcrumb, 'GP GULF LICENSING EXAM');
     });
@@ -27,10 +27,10 @@ void main() {
         'course': {'id': 22, 'title': 'GP GULF'},
         'courseType': {'id': 20, 'title': 'DHA'},
         // subject comes back as `name`, everything else as `title`
-        'subject': {'id': 7, 'name': 'Internal Med'},
+        'chapter': {'id': 17, 'title': 'Obstetrics And Gynecology'},
       });
 
-      expect(deck.breadcrumb, 'GP GULF › DHA › Internal Med');
+      expect(deck.breadcrumb, 'GP GULF › DHA › Obstetrics And Gynecology');
     });
 
     test('changing a parent clears every child', () {
@@ -38,27 +38,28 @@ void main() {
       // anything carried over from the previous exam may not exist under the
       // new one - and the server refuses the mismatch.
       const full = RecallScope(
-          courseId: 1, courseTypeId: 2, subjectId: 3, lessonId: 4);
+          courseId: 1, courseTypeId: 2, chapterId: 3, lessonId: 4);
 
       final recoursed = full.withCourse(9);
       expect(recoursed.courseTypeId, isNull);
-      expect(recoursed.subjectId, isNull);
+      expect(recoursed.chapterId, isNull);
       expect(recoursed.lessonId, isNull);
 
       final retyped = full.withCourseType(7);
       expect(retyped.courseId, 1);
-      expect(retyped.subjectId, isNull);
+      expect(retyped.chapterId, isNull);
       expect(retyped.lessonId, isNull);
     });
 
-    test('subject and lesson are siblings, not a chain', () {
-      // A lesson does not live under a subject; they are two separate
-      // narrowings of the same exam, so neither clears the other.
+    test('a new subject clears the lesson, because lessons live in it', () {
+      // The subject IS the chapter, and a lesson from the previous chapter is
+      // refused: "That lesson belongs to a different chapter".
       const full = RecallScope(
-          courseId: 1, courseTypeId: 2, subjectId: 3, lessonId: 4);
+          courseId: 1, courseTypeId: 2, chapterId: 3, lessonId: 4);
 
-      expect(full.withSubject(9).lessonId, 4);
-      expect(full.withLesson(9).subjectId, 3);
+      expect(full.withChapter(9).lessonId, isNull);
+      expect(full.withChapter(9).courseTypeId, 2);
+      expect(full.withLesson(9).chapterId, 3);
     });
   });
 
@@ -74,6 +75,39 @@ void main() {
       expect(const RapidRecallCard().isEmpty, isTrue);
       // Whitespace is not content in either half.
       expect(const RapidRecallCard(imageUrl: '   ', note: '  ').isEmpty, isTrue);
+    });
+
+    test('a title and a description round-trip through the one note field', () {
+      final note = RapidRecallCard.composeNote(
+          'Pseudo gout', 'CPPD = Rhomboid + Positive + Knee.');
+      final card = RapidRecallCard(note: note);
+
+      expect(card.noteTitle, 'Pseudo gout');
+      expect(card.noteBody, 'CPPD = Rhomboid + Positive + Knee.');
+      // Plain text for anything that renders `note` as-is.
+      expect(note, 'Pseudo gout\n\nCPPD = Rhomboid + Positive + Knee.');
+    });
+
+    test('a note written before titles existed is all description', () {
+      const card = RapidRecallCard(note: 'CPPD = Rhomboid + Positive + Knee.');
+      expect(card.noteTitle, '');
+      expect(card.noteBody, 'CPPD = Rhomboid + Positive + Knee.');
+    });
+
+    test('paragraphs inside the description survive the split', () {
+      // Only the FIRST blank line divides title from description.
+      final note = RapidRecallCard.composeNote('Gout', 'First.\n\nSecond.');
+      final card = RapidRecallCard(note: note);
+
+      expect(card.noteTitle, 'Gout');
+      expect(card.noteBody, 'First.\n\nSecond.');
+    });
+
+    test('either half alone is sent without a stray blank line', () {
+      expect(RapidRecallCard.composeNote('Gout', ''), 'Gout');
+      expect(RapidRecallCard.composeNote('', 'Just the answer.'),
+          'Just the answer.');
+      expect(RapidRecallCard.composeNote('  ', '  '), '');
     });
 
     test('an image-only note sends just the image', () {
@@ -107,7 +141,9 @@ void main() {
       expect(payload['courseId'], 22);
       expect(payload.containsKey('courseTypeId'), isTrue);
       expect(payload['courseTypeId'], isNull);
-      expect(payload.containsKey('subjectId'), isTrue);
+      expect(payload.containsKey('chapterId'), isTrue);
+      // subjectId is gone from the contract entirely.
+      expect(payload.containsKey('subjectId'), isFalse);
       expect(payload.containsKey('lessonId'), isTrue);
     });
 

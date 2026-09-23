@@ -15,7 +15,7 @@ class AdminAuthService {
     late final http.Response response;
     try {
       response = await http.post(
-        Uri.parse(ApiConstant.adminlogn), // -> https://doctorapp-backend-30gd.onrender.com/api/auth/admin/login
+        Uri.parse(ApiConstant.adminlogn), // -> https://doctorapp-backend-cl2h.onrender.com/api/auth/admin/login
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'email': email,

@@ -3,45 +3,43 @@ import 'package:flutter/material.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../models/course_details_model.dart' as details;
 import '../../models/course_get_model.dart';
-import '../../models/question_bank_model.dart';
+import '../../models/chapter_summary_model.dart';
 import '../../services/course_details_service.dart';
 import '../../services/courseget_service.dart';
-import '../../services/subject_topic_service.dart';
+import '../../services/lesson_services.dart';
+import '../../services/chapter_services.dart';
 
 /// Where a deck is filed.
 ///
-/// **Course → exam type → subject → lesson.**
+/// **Course → exam type → subject → lesson**, and a subject here IS a chapter:
+/// this course is built as course → exam type → chapter → lesson, and the
+/// chapters are named "Internal Medicine", "Obstetrics And Gynecology" and so
+/// on. So the Subject dropdown lists the exam type's chapters and the Lesson
+/// dropdown lists that chapter's lessons.
 ///
-/// The exam types and lessons come from one `GET /courses/:id` - the same full
-/// tree the Videos screen walks - rather than from `/course-types` plus a
-/// chapters call per type. Two reasons that matters:
+/// Exam types come from one `GET /courses/:id` - the same full tree the Videos
+/// screen walks - because `/courses/:id/course-types` returns PUBLISHED types
+/// only, and a draft one could not be picked at all.
 ///
-///   * some courses hang their chapters directly off the course and skip exam
-///     types entirely, and those lessons are invisible to a chapters-by-exam
-///     read;
-///   * `/courses/:id/course-types` returns PUBLISHED exam types only, so a
-///     draft one could not be picked at all.
+/// **A funnel, not a path.** Only the course is required. A deck can cover a
+/// whole course, a whole exam type, one chapter, or one lesson.
 ///
-/// Subject and lesson are siblings rather than a chain - a lesson does not sit
-/// under a subject - so either, both or neither may be filled.
-///
-/// **A funnel, not a path.** Only the course is required; everything below it
-/// narrows who sees the deck and may be left empty. A deck written for a whole
-/// subject must not have to be attached to forty lessons.
-///
-/// Children clear when a parent changes. Not tidiness: the subject list is
-/// fetched per exam, so one carried over from the previous exam is a subject
-/// the new one may not have, and the server refuses the mismatch with a 400.
+/// Children clear when a parent changes, and each list is refetched. Not
+/// tidiness: a lesson left from the previous chapter is exactly what the
+/// server now rejects - "That lesson belongs to a different chapter".
 class RecallScope {
   final int? courseId;
   final int? courseTypeId;
-  final int? subjectId;
+
+  /// The chapter, which is what this form calls a subject.
+  final int? chapterId;
+
   final int? lessonId;
 
   const RecallScope({
     this.courseId,
     this.courseTypeId,
-    this.subjectId,
+    this.chapterId,
     this.lessonId,
   });
 
@@ -49,27 +47,21 @@ class RecallScope {
 
   RecallScope withCourse(int? id) => RecallScope(courseId: id);
 
-  /// Clears the subject and the lesson. Both lists are fetched per exam, so
-  /// anything carried over from the previous one may not exist under the new
-  /// exam - and the server refuses "That lesson belongs to a different exam
-  /// under this course".
   RecallScope withCourseType(int? id) =>
       RecallScope(courseId: courseId, courseTypeId: id);
 
-  /// Subject and lesson are two separate narrowings of the same exam, not a
-  /// chain: a lesson does not live under a subject, so picking one leaves the
-  /// other alone.
-  RecallScope withSubject(int? id) => RecallScope(
+  /// Clears the lesson: lessons hang off the chapter, so one from the previous
+  /// chapter is refused with "That lesson belongs to a different chapter".
+  RecallScope withChapter(int? id) => RecallScope(
         courseId: courseId,
         courseTypeId: courseTypeId,
-        subjectId: id,
-        lessonId: lessonId,
+        chapterId: id,
       );
 
   RecallScope withLesson(int? id) => RecallScope(
         courseId: courseId,
         courseTypeId: courseTypeId,
-        subjectId: subjectId,
+        chapterId: chapterId,
         lessonId: id,
       );
 }
@@ -102,29 +94,33 @@ class RecallScopePicker extends StatefulWidget {
 class _RecallScopePickerState extends State<RecallScopePicker> {
   final _courseService = CourseListGetService();
   final _courseDetails = CourseDetailsService();
-  final _subjectService = SubjectTopicService();
+  final _chapterService = ChapterService();
+  final _lessonService = LessonService();
 
   List<CourseListGetModel> _courses = const [];
   details.CourseDetails? _tree;
-  List<Subject> _subjects = const [];
+  List<ChapterSummary> _chapters = const [];
 
   bool _loadingTypes = false;
-  bool _loadingSubjects = false;
+  bool _loadingChapters = false;
+  bool _loadingLessons = false;
 
-  /// The course has no subject linked to it, so the API offered every subject
-  /// rather than an empty list. Said out loud under the dropdown - otherwise
-  /// the list looks arbitrary and nobody can tell why.
-  bool _subjectsAreFallback = false;
+  /// Straight from `GET /api/lessons?chapterId=`, so the chosen subject is
+  /// what narrows it.
+  List<LessonOption> _lessonOptions = const [];
+
+
 
   @override
   void initState() {
     super.initState();
     _loadCourses();
     final courseId = widget.value.courseId;
-    if (courseId != null) {
-      _loadTree(courseId);
-      _loadSubjects(courseId, widget.value.courseTypeId);
-    }
+    if (courseId != null) _loadTree(courseId);
+    final typeId = widget.value.courseTypeId;
+    if (typeId != null) _loadChapters(typeId);
+    final chapterId = widget.value.chapterId;
+    if (chapterId != null) _loadLessons(chapterId);
   }
 
   @override
@@ -136,23 +132,64 @@ class _RecallScopePickerState extends State<RecallScopePicker> {
 
     if (courseId != old.value.courseId) {
       if (courseId == null) {
-        setState(() {
-          _tree = null;
-          _subjects = const [];
-          _subjectsAreFallback = false;
-        });
+        setState(() => _tree = null);
       } else {
         _loadTree(courseId);
-        _loadSubjects(courseId, null);
       }
     }
 
-    // The subject list is scoped by exam as well as by course, so a new exam
-    // type has to refetch it - not merely clear the selection.
+    // Chapters are the subjects, and they hang off the exam type.
     if (typeId != old.value.courseTypeId) {
-      // The lesson list is derived from the tree already in hand, so an exam
-      // type change needs no second request.
-      if (courseId != null) _loadSubjects(courseId, typeId);
+      if (typeId == null) {
+        setState(() => _chapters = const []);
+      } else {
+        _loadChapters(typeId);
+      }
+    }
+
+    final chapterId = widget.value.chapterId;
+    if (chapterId != old.value.chapterId) {
+      if (chapterId == null) {
+        setState(() => _lessonOptions = const []);
+      } else {
+        _loadLessons(chapterId);
+      }
+    }
+  }
+
+  /// GET /api/course-types/:id/chapters - the subjects of this exam type.
+  Future<void> _loadChapters(int courseTypeId) async {
+    setState(() => _loadingChapters = true);
+    final result =
+        await _chapterService.getChapters(courseTypeId: courseTypeId);
+    // A slow answer for an exam the admin has already moved off must not
+    // overwrite the list for the one they are on now.
+    if (!mounted || widget.value.courseTypeId != courseTypeId) return;
+    setState(() {
+      _loadingChapters = false;
+      _chapters = result.isSuccess ? (result.chapters ?? const []) : const [];
+    });
+  }
+
+  /// GET /api/lessons?chapterId= - the lessons of the chosen subject.
+  Future<void> _loadLessons(int chapterId) async {
+    setState(() => _loadingLessons = true);
+    final result = await _lessonService.searchLessons(chapterId: chapterId);
+
+    // A slow answer for a chapter the admin has already moved off must not
+    // overwrite the list for the one they are on now.
+    if (!mounted || widget.value.chapterId != chapterId) return;
+
+    setState(() {
+      _loadingLessons = false;
+      _lessonOptions = result.isSuccess ? result.lessons : const [];
+    });
+
+    // A lesson the new list no longer holds would still be sent on save and
+    // refused, so it is cleared rather than left selected but invisible.
+    final chosen = widget.value.lessonId;
+    if (chosen != null && !_lessonOptions.any((l) => l.id == chosen)) {
+      widget.onChanged(widget.value.withLesson(null));
     }
   }
 
@@ -164,30 +201,6 @@ class _RecallScopePickerState extends State<RecallScopePicker> {
       // A dropdown that fails to fill shows as an empty dropdown. Throwing
       // here would take the whole screen down with it.
     }
-  }
-
-  /// GET /api/admin/courses/:courseId/subjects?courseTypeId=
-  ///
-  /// Not /api/subjects, which returns every subject in the system regardless
-  /// of course - a list an admin cannot tell apart from a relevant one.
-  Future<void> _loadSubjects(int courseId, int? courseTypeId) async {
-    setState(() => _loadingSubjects = true);
-    final result = await _subjectService.getCourseSubjects(
-      courseId: courseId,
-      courseTypeId: courseTypeId,
-    );
-    // A slow response for a course or exam the admin has already moved off
-    // must not overwrite the list for the one they are now on.
-    if (!mounted ||
-        widget.value.courseId != courseId ||
-        widget.value.courseTypeId != courseTypeId) {
-      return;
-    }
-    setState(() {
-      _loadingSubjects = false;
-      _subjects = result.isSuccess ? result.subjects : const [];
-      _subjectsAreFallback = result.isSuccess && result.fallback;
-    });
   }
 
   /// One read of the full course tree: exam types, their chapters, and the
@@ -213,50 +226,6 @@ class _RecallScopePickerState extends State<RecallScopePicker> {
   }
 
   List<details.CourseType> get _types => _tree?.courseTypes ?? const [];
-
-  /// The lessons a deck can be pinned to.
-  ///
-  /// With no exam type chosen this is every lesson on the course, including
-  /// the ones under chapters that sit directly on the course rather than under
-  /// an exam - those exist and would otherwise be unreachable. Choosing an
-  /// exam type narrows to that exam's own chapters.
-  List<({int id, String label})> get _lessons {
-    final tree = _tree;
-    if (tree == null) return const [];
-
-    final typeId = widget.value.courseTypeId;
-    final out = <({int id, String label})>[];
-
-    void collect(details.Chapter chapter, String? examTitle) {
-      for (final lesson in chapter.lessons) {
-        out.add((
-          id: lesson.id,
-          label: examTitle == null
-              ? '${chapter.title} › ${lesson.title}'
-              : '$examTitle › ${chapter.title} › ${lesson.title}',
-        ));
-      }
-    }
-
-    if (typeId == null) {
-      for (final chapter in tree.chapters) {
-        collect(chapter, null);
-      }
-      for (final type in tree.courseTypes) {
-        for (final chapter in type.chapters) {
-          collect(chapter, type.title);
-        }
-      }
-    } else {
-      for (final type in tree.courseTypes) {
-        if (type.id != typeId) continue;
-        for (final chapter in type.chapters) {
-          collect(chapter, null);
-        }
-      }
-    }
-    return out;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -309,56 +278,58 @@ class _RecallScopePickerState extends State<RecallScopePicker> {
               onChanged: (id) => widget.onChanged(scope.withCourseType(id)),
             )),
             cell(_Dropdown<int>(
+              // The chapters of this exam type: they are the subjects.
               label: 'Subject',
-              hint: _loadingSubjects
+              hint: _loadingChapters
                   ? 'Loading…'
-                  : !scope.hasCourse
-                      ? 'Pick a course first'
-                      : _subjects.isEmpty
-                          ? 'No subjects on this course'
+                  : scope.courseTypeId == null
+                      ? 'Pick an exam type first'
+                      : _chapters.isEmpty
+                          ? 'No subjects in this exam type'
                           : 'No subject',
-              // The API offers every subject in the system when a course has
-              // none of its own. That list is not a choice an admin can make
-              // sense of, so it is not shown - the reason is, instead.
-              helperText: _subjectsAreFallback
-                  ? 'No subjects are linked to this course yet.'
-                  : null,
-              helperIsWarning: _subjectsAreFallback,
-              value: scope.subjectId,
+              value: scope.chapterId,
               enabled: widget.enabled &&
-                  scope.hasCourse &&
-                  !_loadingSubjects &&
-                  _subjects.isNotEmpty,
-              disabledMessage: !scope.hasCourse
-                  ? 'Choose a course first — subjects are listed per course.'
-                  : _loadingSubjects
-                      ? 'Still loading this course\'s subjects…'
-                      : 'No subjects are linked to this course yet.',
-              items: [for (final s in _subjects) (value: s.id, label: s.name)],
-              onChanged: (id) => widget.onChanged(scope.withSubject(id)),
+                  scope.courseTypeId != null &&
+                  !_loadingChapters &&
+                  _chapters.isNotEmpty,
+              disabledMessage: scope.courseTypeId == null
+                  ? 'Choose an exam type first — subjects are its chapters.'
+                  : _loadingChapters
+                      ? 'Still loading this exam type\'s subjects…'
+                      : 'This exam type has no subjects yet.',
+              items: [
+                for (final c in _chapters) (value: c.id, label: c.title),
+              ],
+              onChanged: (id) => widget.onChanged(scope.withChapter(id)),
             )),
             cell(_Dropdown<int>(
               label: 'Lesson',
-              // Available as soon as a course is chosen: an exam type narrows
-              // the list, it is not a gate in front of it.
-              hint: _loadingTypes
+              // Lessons hang off the chapter, so the subject is a gate in
+              // front of this one rather than only a filter.
+              hint: _loadingLessons
                   ? 'Loading…'
-                  : !scope.hasCourse
-                      ? 'Pick a course first'
-                      : _lessons.isEmpty
-                          ? 'No lessons on this course'
+                  : scope.chapterId == null
+                      ? 'Pick a subject first'
+                      : _lessonOptions.isEmpty
+                          // Valid, and not a blocker: the deck simply stays at
+                          // chapter level.
+                          ? 'No lesson in this subject'
                           : 'No lesson',
               value: scope.lessonId,
               enabled: widget.enabled &&
-                  scope.hasCourse &&
-                  !_loadingTypes &&
-                  _lessons.isNotEmpty,
-              disabledMessage: !scope.hasCourse
-                  ? 'Choose a course first — lessons are listed per course.'
-                  : _loadingTypes
-                      ? 'Still loading this course\'s lessons…'
-                      : 'This course has no lessons yet.',
-              items: [for (final l in _lessons) (value: l.id, label: l.label)],
+                  scope.chapterId != null &&
+                  !_loadingLessons &&
+                  _lessonOptions.isNotEmpty,
+              disabledMessage: scope.chapterId == null
+                  ? 'Choose a subject first — lessons are listed per subject.'
+                  : _loadingLessons
+                      ? 'Still loading this subject\'s lessons…'
+                      : 'This subject has no lessons. The deck can stay at '
+                          'subject level.',
+              items: [
+                for (final l in lessonDropdownItems(_lessonOptions))
+                  (value: l.id, label: l.label),
+              ],
               onChanged: (id) => widget.onChanged(scope.withLesson(id)),
             )),
           ],

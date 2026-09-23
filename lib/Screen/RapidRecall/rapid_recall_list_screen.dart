@@ -24,10 +24,6 @@ class _RapidRecallListScreenState extends State<RapidRecallListScreen> {
   RecallScope _scope = const RecallScope();
   String? _status;
 
-  /// `?subjectId=null` - the decks that were never narrowed to a subject.
-  /// Distinct from sending no subjectId at all, which matches everything.
-  bool _courseWideOnly = false;
-
   List<RapidRecall> _recalls = const [];
   bool _isLoading = true;
   String? _error;
@@ -55,11 +51,10 @@ class _RapidRecallListScreenState extends State<RapidRecallListScreen> {
     final result = await _service.list(
       courseId: _scope.courseId,
       courseTypeId: _scope.courseTypeId,
-      subjectId: _courseWideOnly ? null : _scope.subjectId,
+      chapterId: _scope.chapterId,
       lessonId: _scope.lessonId,
       status: _status,
       search: _search.text,
-      unscopedSubject: _courseWideOnly,
     );
     if (!mounted) return;
 
@@ -181,7 +176,6 @@ class _RapidRecallListScreenState extends State<RapidRecallListScreen> {
         _FilterCard(
           scope: _scope,
           status: _status,
-          courseWideOnly: _courseWideOnly,
           searchController: _search,
           onScopeChanged: (scope) {
             setState(() => _scope = scope);
@@ -189,10 +183,6 @@ class _RapidRecallListScreenState extends State<RapidRecallListScreen> {
           },
           onStatusChanged: (status) {
             setState(() => _status = status);
-            _load();
-          },
-          onCourseWideChanged: (value) {
-            setState(() => _courseWideOnly = value);
             _load();
           },
           onSearchChanged: _searchChanged,
@@ -213,7 +203,7 @@ class _RapidRecallListScreenState extends State<RapidRecallListScreen> {
           _Empty(
             icon: Icons.style_outlined,
             title: 'No decks here',
-            body: _scope.hasCourse || _status != null || _courseWideOnly
+            body: _scope.hasCourse || _status != null
                 ? 'Nothing matches these filters.'
                 : 'Create one to get started.',
             action: TextButton(
@@ -238,21 +228,17 @@ class _RapidRecallListScreenState extends State<RapidRecallListScreen> {
 class _FilterCard extends StatelessWidget {
   final RecallScope scope;
   final String? status;
-  final bool courseWideOnly;
   final TextEditingController searchController;
   final ValueChanged<RecallScope> onScopeChanged;
   final ValueChanged<String?> onStatusChanged;
-  final ValueChanged<bool> onCourseWideChanged;
   final ValueChanged<String> onSearchChanged;
 
   const _FilterCard({
     required this.scope,
     required this.status,
-    required this.courseWideOnly,
     required this.searchController,
     required this.onScopeChanged,
     required this.onStatusChanged,
-    required this.onCourseWideChanged,
     required this.onSearchChanged,
   });
 
@@ -310,15 +296,6 @@ class _FilterCard extends StatelessWidget {
                   selected: status == option.value,
                   onTap: () => onStatusChanged(option.value),
                 ),
-              const SizedBox(width: 6),
-              // Answers "what applies course-wide?" - the decks deliberately
-              // not narrowed to a subject.
-              _Toggle(
-                label: 'No subject',
-                icon: Icons.filter_alt_outlined,
-                selected: courseWideOnly,
-                onTap: () => onCourseWideChanged(!courseWideOnly),
-              ),
             ],
           ),
         ],
@@ -331,13 +308,11 @@ class _Toggle extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  final IconData? icon;
 
   const _Toggle({
     required this.label,
     required this.selected,
     required this.onTap,
-    this.icon,
   });
 
   @override
@@ -356,12 +331,6 @@ class _Toggle extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (icon != null) ...[
-              Icon(icon,
-                  size: 13,
-                  color: selected ? Colors.white : LmsColors.textGrey),
-              const SizedBox(width: 6),
-            ],
             Text(
               label,
               style: TextStyle(

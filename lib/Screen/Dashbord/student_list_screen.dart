@@ -151,10 +151,7 @@ class _StudentRow extends StatelessWidget {
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 640;
 
-        final avatar = _StudentAvatar(
-          initial: _initial,
-          // avatarUrl: student.avatarUrl,  // uncomment once the field exists on the model
-        );
+        final avatar = _StudentAvatar(initial: _initial);
 
         final nameBlock = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -286,13 +283,11 @@ class _StudentRow extends StatelessWidget {
   }
 }
 
-// ── Avatar: shows the real profile photo when available, falls back
-// to a colored initial circle otherwise. ──────────────────────────────
+// ── Avatar: a coloured circle with the student's initial. ─────────────
 class _StudentAvatar extends StatelessWidget {
   final String initial;
-  final String? avatarUrl;
 
-  const _StudentAvatar({required this.initial, this.avatarUrl});
+  const _StudentAvatar({required this.initial});
 
   // Deterministic color per-student so initials aren't all one flat
   // color - based on a simple hash of the initial character.
@@ -311,7 +306,6 @@ class _StudentAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = avatarUrl != null && avatarUrl!.isNotEmpty;
     final color = _colorFor(initial);
 
     return Container(
@@ -319,27 +313,19 @@ class _StudentAvatar extends StatelessWidget {
       height: 44,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: color.withOpacity(0.12),
-        border: Border.all(color: color.withOpacity(0.25)),
-        image: hasPhoto
-            ? DecorationImage(
-                image: NetworkImage(avatarUrl!),
-                fit: BoxFit.cover,
-              )
-            : null,
+        color: color.withValues(alpha: 0.12),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
-      child: hasPhoto
-          ? null
-          : Center(
-              child: Text(
-                initial,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: color,
-                ),
-              ),
-            ),
+      child: Center(
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
+      ),
     );
   }
 }

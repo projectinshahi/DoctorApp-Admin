@@ -16,6 +16,10 @@ class Lesson {
   final String? notePublicId;
   final String? noteFileType;
   final String? content;            // quiz reference
+
+  /// Optional, and for filtering only: it does not change what a student
+  /// sees. A quiz lesson with none borrows its quiz's subject server-side.
+  final int? subjectId;
   final int displayOrder;
   final bool isFreePreview;
   final String accessType;          // raw API value: 'free' | 'premium'
@@ -40,6 +44,7 @@ class Lesson {
     this.notePublicId,
     this.noteFileType,
     this.content,
+    this.subjectId,
     required this.displayOrder,
     required this.isFreePreview,
     required this.accessType,
@@ -66,6 +71,7 @@ class Lesson {
       notePublicId: json['notePublicId'] as String?,
       noteFileType: json['noteFileType'] as String?,
       content: json['content'] as String?,
+      subjectId: (json['subjectId'] as num?)?.toInt(),
       displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
       isFreePreview: json['isFreePreview'] as bool? ?? false,
       accessType: json['accessType'] as String? ?? 'free',
@@ -93,6 +99,7 @@ class Lesson {
       'notePublicId': notePublicId,
       'noteFileType': noteFileType,
       'content': content,
+      'subjectId': subjectId,
       'displayOrder': displayOrder,
       'isFreePreview': isFreePreview,
       'accessType': accessType,

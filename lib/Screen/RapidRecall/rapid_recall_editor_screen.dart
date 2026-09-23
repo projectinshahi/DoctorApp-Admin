@@ -94,7 +94,7 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
       _scope = RecallScope(
         courseId: recall.courseId,
         courseTypeId: recall.courseTypeId,
-        subjectId: recall.subjectId,
+        chapterId: recall.chapterId,
         lessonId: recall.lessonId,
       );
     });
@@ -139,7 +139,7 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
       description: _description.text.trim(),
       courseId: courseId,
       courseTypeId: _scope.courseTypeId,
-      subjectId: _scope.subjectId,
+      chapterId: _scope.chapterId,
       lessonId: _scope.lessonId,
       // The deck no longer carries its own file; each note holds its own.
       noteUrl: _recall?.noteUrl,
@@ -305,19 +305,29 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
 
                         const _Label('Where this deck is filed'),
                         const SizedBox(height: 3),
-                        const Text(
-                          'Only the course is required. The exam type, the '
-                          'subject and the lesson each narrow who sees the '
-                          'deck, and any of them may be left empty.',
-                          style: TextStyle(
-                              fontSize: 12, color: LmsColors.textGrey),
+                        Text(
+                          _isNew
+                              ? 'Only the course is required. The exam type, '
+                                  'the subject and the lesson each narrow who '
+                                  'sees the deck, and any of them may be left '
+                                  'empty. A subject is a chapter of the exam '
+                                  'type.'
+                              // Locked once the deck exists: moving a deck
+                              // between lessons mid-edit is how notes end up
+                              // filed under something nobody meant.
+                              : 'Set when this deck was created. To file it '
+                                  'somewhere else, go back and create a deck '
+                                  'there.',
+                          style: const TextStyle(
+                              fontSize: 12, height: 1.45,
+                              color: LmsColors.textGrey),
                         ),
                         const SizedBox(height: 12),
                         RecallScopePicker(
                           value: _scope,
                           requireCourse: true,
                           courseError: _courseError,
-                          enabled: !_isSaving,
+                          enabled: !_isSaving && _isNew,
                           onChanged: (scope) => setState(() {
                             _scope = scope;
                             _courseError = null;
@@ -325,31 +335,37 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
                         ),
                         const SizedBox(height: 24),
 
-                        const _Label('The deck'),
-                        const SizedBox(height: 3),
-                        const Text(
-                          'Both are required. The title is how the deck is '
-                          'found; the description is what a student reads '
-                          'before opening it.',
-                          style: TextStyle(
-                              fontSize: 12, color: LmsColors.textGrey),
-                        ),
-                        const SizedBox(height: 12),
-                        _Field(
-                          controller: _title,
-                          label: 'Title *',
-                          hint: 'ECG rapid recall',
-                          enabled: !_isSaving,
-                        ),
-                        const SizedBox(height: 12),
-                        _Field(
-                          controller: _description,
-                          label: 'Description *',
-                          hint: 'Read these the night before.',
-                          enabled: !_isSaving,
-                          maxLines: 3,
-                        ),
-                        const SizedBox(height: 22),
+                        // The deck's own title and description are asked for
+                        // once, when it is created. On an existing deck they
+                        // are not shown at all: the screen is for its notes.
+                        if (_isNew) ...[
+                          const _Label('The deck'),
+                          const SizedBox(height: 3),
+                          const Text(
+                            'Both are required. The title is how the deck is '
+                            'found; the description is what a student reads '
+                            'before opening it.',
+                            style: TextStyle(
+                                fontSize: 12, height: 1.45,
+                                color: LmsColors.textGrey),
+                          ),
+                          const SizedBox(height: 12),
+                          _Field(
+                            controller: _title,
+                            label: 'Title *',
+                            hint: 'ECG rapid recall',
+                            enabled: !_isSaving,
+                          ),
+                          const SizedBox(height: 12),
+                          _Field(
+                            controller: _description,
+                            label: 'Description *',
+                            hint: 'Read these the night before.',
+                            enabled: !_isSaving,
+                            maxLines: 3,
+                          ),
+                          const SizedBox(height: 22),
+                        ],
 
                         _StatusRow(
                           published: _wantPublished,
@@ -363,11 +379,11 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
                         const SizedBox(height: 3),
                         const Text(
                           'Write as many as the deck needs — they are all '
-                          'created together when you save. Each note can have '
-                          'an image, typed text, an attached PDF, or any mix; '
-                          'the image is optional.\n'
-                          'Drag to reorder. The order on screen is the order '
-                          'students get.',
+                          'saved together. Each note can have an image, a '
+                          'title and a description; every part is optional, '
+                          'but a note cannot be completely empty.\n'
+                          'A new note is added at the top. Drag to reorder — '
+                          'the order on screen is the order students get.',
                           style: TextStyle(
                               fontSize: 12, height: 1.45,
                               color: LmsColors.textGrey),

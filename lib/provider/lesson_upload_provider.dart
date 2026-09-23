@@ -46,6 +46,7 @@ class LessonUpdateProvider extends ChangeNotifier {
     int? planId, // NEW
     List<int>? planIds, // NEW - the full multi-plan selection
     int? quizId, // NEW - set only on quiz lessons
+    int? subjectId, // NEW - optional, for filtering only
   }) async {
     isUpdating = true;
     errorMessage = null;
@@ -71,6 +72,7 @@ class LessonUpdateProvider extends ChangeNotifier {
       planId: planId, // NEW
       planIds: planIds, // NEW
       quizId: quizId, // NEW
+      subjectId: subjectId, // NEW
     );
 
     isUpdating = false;
@@ -114,6 +116,8 @@ class LessonUpdateProvider extends ChangeNotifier {
     List<int>? planIds, // NEW - the full multi-plan selection
     int? quizId, // NEW
     bool removeQuiz = false, // NEW - unlink when a lesson stops being a quiz
+    int? subjectId, // NEW - optional, for filtering only
+    bool removeSubject = false, // NEW - null clears it
   }) async {
     isUpdating = true;
     errorMessage = null;
@@ -145,6 +149,8 @@ class LessonUpdateProvider extends ChangeNotifier {
       planIds: planIds, // NEW
       quizId: quizId, // NEW
       removeQuiz: removeQuiz, // NEW
+      subjectId: subjectId, // NEW
+      removeSubject: removeSubject, // NEW
     );
 
     isUpdating = false;

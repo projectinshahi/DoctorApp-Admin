@@ -37,10 +37,6 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AdminPlanProvider()),
         ChangeNotifierProvider(create: (_) => LessonUpdateProvider()),
         ChangeNotifierProvider(create: (_) => LessonDetailsProvider()),
-        // Question bank. The add/edit sheet builds its own
-        // QuestionUpdateProvider / SubjectTopicProvider, the same way the
-        // lesson sheet does, so these two are only the list screen's state.
-        ChangeNotifierProvider(create: (_) => QuestionListProvider()),
         ChangeNotifierProvider(create: (_) => SubjectTopicProvider()),
       ],
       child: MaterialApp(

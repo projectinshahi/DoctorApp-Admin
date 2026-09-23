@@ -31,6 +31,95 @@ class LessonListResult {
       LessonListResult._(isSuccess: false, errorMessage: message);
 }
 
+/// One row of `GET /api/lessons`, shaped for a dropdown.
+class LessonOption {
+  final int id;
+  final String title;
+  final String type;
+  final String chapterTitle;
+
+  /// The subject an admin set on the lesson, or null.
+  final int? subjectId;
+
+  /// The subject borrowed from the lesson's quiz when none was set. A lesson
+  /// that matched on this is one nobody has tagged yet.
+  final int? subjectFromQuiz;
+
+  const LessonOption({
+    required this.id,
+    required this.title,
+    required this.type,
+    required this.chapterTitle,
+    this.subjectId,
+    this.subjectFromQuiz,
+  });
+
+  factory LessonOption.fromJson(Map<String, dynamic> json) {
+    final chapter = json['chapter'];
+    return LessonOption(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      title: '${json['title'] ?? ''}',
+      type: '${json['type'] ?? ''}',
+      chapterTitle: chapter is Map ? '${chapter['title'] ?? ''}' : '',
+      subjectId: (json['subjectId'] as num?)?.toInt(),
+      subjectFromQuiz: (json['subjectFromQuiz'] as num?)?.toInt(),
+    );
+  }
+}
+
+/// Dropdown labels for a list of lessons.
+///
+/// The title alone: the dropdown already says which subject it is filtered by,
+/// so repeating the chapter or where the subject came from on every row is
+/// noise.
+///
+/// The exception is a genuine collision - "Obstetrics" exists today as both a
+/// video and a text lesson - where the type is appended so the two can be told
+/// apart. Only then, never for the sake of the rare pair.
+List<({int id, String label})> lessonDropdownItems(List<LessonOption> lessons) {
+  final seen = <String, int>{};
+  for (final lesson in lessons) {
+    final key = lesson.title.trim().toLowerCase();
+    seen[key] = (seen[key] ?? 0) + 1;
+  }
+  return [
+    for (final lesson in lessons)
+      (
+        id: lesson.id,
+        label: (seen[lesson.title.trim().toLowerCase()] ?? 0) > 1 &&
+                lesson.type.trim().isNotEmpty
+            ? '${lesson.title} (${lesson.type})'
+            : lesson.title,
+      ),
+  ];
+}
+
+class LessonOptionsResult {
+  final bool isSuccess;
+  final List<LessonOption> lessons;
+
+  /// Nothing carried the chosen subject, so the server returned every lesson
+  /// instead. Not an error - see [LessonService.searchLessons].
+  final bool fallback;
+
+  final String? errorMessage;
+
+  const LessonOptionsResult._({
+    required this.isSuccess,
+    this.lessons = const [],
+    this.fallback = false,
+    this.errorMessage,
+  });
+
+  factory LessonOptionsResult.success(List<LessonOption> lessons,
+          {required bool fallback}) =>
+      LessonOptionsResult._(
+          isSuccess: true, lessons: lessons, fallback: fallback);
+
+  factory LessonOptionsResult.failure(String message) =>
+      LessonOptionsResult._(isSuccess: false, errorMessage: message);
+}
+
 enum LessonType { video, text, quiz }
 
 extension LessonTypeX on LessonType {
@@ -153,6 +242,7 @@ class LessonService {
     int? planId,
     List<int>? planIds,
     int? quizId,
+    int? subjectId,
   }) async {
     final adminToken = await _getToken();
     if (adminToken == null) {
@@ -178,6 +268,8 @@ class LessonService {
     if (accessType != null) body['accessType'] = accessType.apiValue;
     if (status != null) body['status'] = status.apiValue;
     if (quizId != null) body['quizId'] = quizId;
+    // Optional, and for filtering only - it changes nothing a student sees.
+    if (subjectId != null) body['subjectId'] = subjectId;
     // Plans are only meaningful for premium — sending them with 'free' is a
     // 400. Premium with an empty selection means "any active subscription".
     if (accessType == LessonAccessType.premium) {
@@ -232,6 +324,8 @@ class LessonService {
     List<int>? planIds,
     int? quizId,
     bool removeQuiz = false,
+    int? subjectId,
+    bool removeSubject = false,
   }) async {
     final adminToken = await _getToken();
     if (adminToken == null) {
@@ -241,6 +335,13 @@ class LessonService {
     final uri = Uri.parse('$baseUrl/api/lessons/$lessonId');
     final body = <String, dynamic>{};
     if (title != null) body['title'] = title;
+    // null clears the subject, which is why it needs its own flag: an
+    // absent key would leave the old one in place.
+    if (removeSubject) {
+      body['subjectId'] = null;
+    } else if (subjectId != null) {
+      body['subjectId'] = subjectId;
+    }
     if (type != null) body['type'] = type.apiValue;
 
     if (removeDescription) {
@@ -403,6 +504,82 @@ class LessonService {
       return LessonListResult.failure('Unexpected response from server.');
     } catch (e) {
       return LessonListResult.failure('Something went wrong: $e');
+    }
+  }
+
+  /// GET /api/lessons?courseId=&courseTypeId=&subjectId=&search=
+  ///
+  /// Every parameter is optional and narrows the list. A lesson matches a
+  /// subject either because an admin tagged it or because its quiz carries
+  /// that subject; `subjectFromQuiz` says which.
+  ///
+  /// **Never asks for the fallback.** Adding `fallback=true` would return every
+  /// lesson in the course when the subject matches nothing, and a dropdown
+  /// labelled "Internal Med" must not offer a Dermatology lesson. An empty
+  /// list is the honest answer; the caller says "No lesson for this subject".
+  Future<LessonOptionsResult> searchLessons({
+    int? chapterId,
+    int? courseId,
+    int? courseTypeId,
+    int? subjectId,
+    String? search,
+  }) async {
+    final adminToken = await _getToken();
+    if (adminToken == null) {
+      return LessonOptionsResult.failure(
+          'Session expired. Please log in again.');
+    }
+
+    final query = <String, String>{
+      if (chapterId != null) 'chapterId': '$chapterId',
+      if (courseId != null) 'courseId': '$courseId',
+      if (courseTypeId != null) 'courseTypeId': '$courseTypeId',
+      if (subjectId != null) 'subjectId': '$subjectId',
+      if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+    };
+
+    final uri = Uri.parse('$baseUrl/api/lessons')
+        .replace(queryParameters: query.isEmpty ? null : query);
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $adminToken',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      final decoded =
+          response.body.isNotEmpty ? jsonDecode(response.body) : null;
+
+      if (response.statusCode == 200 && decoded is Map) {
+        final raw = decoded['lessons'];
+        return LessonOptionsResult.success(
+          raw is List
+              ? raw
+                  .whereType<Map<String, dynamic>>()
+                  .map(LessonOption.fromJson)
+                  .toList()
+              : const [],
+          fallback: decoded['fallback'] == true,
+        );
+      }
+
+      var message = 'Failed to fetch lessons (status ${response.statusCode})';
+      if (decoded is Map &&
+          decoded['error'] is Map &&
+          decoded['error']['message'] != null) {
+        message = '${decoded['error']['message']}';
+      }
+      return LessonOptionsResult.failure(message);
+    } on http.ClientException {
+      return LessonOptionsResult.failure(
+          'Network error. Please check your connection.');
+    } on FormatException {
+      return LessonOptionsResult.failure('Unexpected response from server.');
+    } catch (e) {
+      return LessonOptionsResult.failure('Something went wrong: $e');
     }
   }
 

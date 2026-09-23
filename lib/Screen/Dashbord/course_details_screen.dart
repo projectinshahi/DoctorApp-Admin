@@ -279,6 +279,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       initialPlanIds: full.planIds,
       initialPlans: full.plans,
       initialDisplayOrder: full.displayOrder,
+      initialSubjectId: full.subjectId,
     );
     if (updated == true) {
       _showSnack('Lesson updated');

@@ -126,7 +126,7 @@ class CourseService {
       Uri.parse('$_baseUrl/$courseId'),
       headers: {
         'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
+        'Authorization': 'Bearer $token',
       },
       body: jsonEncode(body),
     );
@@ -151,7 +151,7 @@ class CourseService {
       Uri.parse('$_baseUrl/$courseId'),
       headers: {
         'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
+        'Authorization': 'Bearer $token',
       },
     );
 
