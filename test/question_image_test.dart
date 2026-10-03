@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:admin_drapp/models/admin_test_model.dart';
 import 'package:admin_drapp/services/question_image_service.dart';
 import 'package:admin_drapp/widget/question_image_view.dart';
 
@@ -53,5 +54,54 @@ void main() {
         containsAll(['jpg', 'jpeg', 'png', 'webp', 'svg']));
     expect(QuestionImageService.allowedExtensions, isNot(contains('pdf')));
     expect(QuestionImageService.maxBytes, 2 * 1024 * 1024);
+  });
+
+  group('an address vs a name the sheet carried', () {
+    test('http and https are addresses', () {
+      expect(QuestionImageView.isAddress('https://res.cloudinary.com/a.png'),
+          isTrue);
+      expect(QuestionImageView.isAddress(' http://host/a.png '), isTrue);
+    });
+
+    test('a bare filename is not, so it is never fetched', () {
+      expect(QuestionImageView.isAddress('q18_rhabdomyolysis.png'), isFalse);
+      expect(QuestionImageView.isAddress('images/q18.png'), isFalse);
+    });
+  });
+
+  group('reading the image out of a preview row', () {
+    test('the filename spelling is read, not just the url one', () {
+      final question = TestPreviewQuestion.fromJson({
+        'id': 1,
+        'questionText': 'Crush injury',
+        'question_image_filename': 'https://host/q18.png',
+      });
+
+      expect(question.hasImage, isTrue);
+      expect(question.questionImageUrl, 'https://host/q18.png');
+    });
+
+    test('an option image is found under the filename spelling too', () {
+      final question = TestPreviewQuestion.fromJson({
+        'id': 1,
+        'questionText': 'Stone',
+        'optionA': 'Nephrostomy',
+        'option_a_image_filename': 'https://host/q19.png',
+        'optionB': 'Dialysis',
+      });
+
+      expect(question.options.first.imageUrl, 'https://host/q19.png');
+      expect(question.options.length, 2);
+    });
+
+    test('a blank image cell stays absent', () {
+      final question = TestPreviewQuestion.fromJson({
+        'id': 1,
+        'questionText': 'No picture',
+        'questionImageUrl': '   ',
+      });
+
+      expect(question.hasImage, isFalse);
+    });
   });
 }

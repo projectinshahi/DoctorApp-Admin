@@ -583,33 +583,6 @@ class AdminTestService {
     }
   }
 
-  /// Removes every question AND unpublishes the test. The caller must have
-  /// confirmed both consequences first - a published test with no questions
-  /// would be a broken row in the student's list.
-  Future<TestResult> clearQuestions(int testId) async {
-    final token = await _token();
-    if (token == null) return TestResult.failure('Session expired. Please log in again.');
-
-    try {
-      final response = await http
-          .delete(
-            Uri.parse('$_baseUrl/admin/tests/$testId/questions'),
-            headers: _headers(token),
-          )
-          .timeout(_timeout);
-
-      final decoded = _tryDecode(response.body);
-      if (response.statusCode == 200 || response.statusCode == 204) {
-        return TestResult.success(_testFrom(decoded));
-      }
-      return TestResult.failure(
-        _messageFrom(decoded, response.statusCode, 'clear the questions'),
-      );
-    } catch (e) {
-      return TestResult.failure('Could not reach the server: $e');
-    }
-  }
-
   /// Deletes the test outright.
   ///
   /// Questions, images AND attempts cascade, so the server refuses with 409

@@ -283,6 +283,8 @@ class TestPreviewOption {
         raw['optionImageUrl'] ??
         raw['imageUrl'] ??
         raw['option_image_url'] ??
+        raw['optionImageFilename'] ??
+        raw['option_image_filename'] ??
         raw['image'];
     return TestPreviewOption(
       text: (raw['optionText'] ?? raw['text'] ?? raw['option'] ?? '')
@@ -356,10 +358,18 @@ class TestPreviewQuestion {
       id: (json['id'] as num?)?.toInt() ?? 0,
       questionText:
           (json['questionText'] ?? json['question_text'] ?? '') as String,
+      // Every spelling the import and the preview have been seen to use. The
+      // "filename" ones matter because that is the column admins' own sheets
+      // carry, and a question whose picture is stored under it renders as a
+      // question that never had one.
       questionImageUrl: _clean(
         json['questionImageUrl'] ??
             json['question_image_url'] ??
-            json['imageUrl'],
+            json['questionImageFilename'] ??
+            json['question_image_filename'] ??
+            json['imageUrl'] ??
+            json['image_url'] ??
+            json['image'],
       ),
       options: options,
       correctOption: (json['correctOption'] ?? json['correct_option'] ?? '')
@@ -385,6 +395,8 @@ class TestPreviewQuestion {
       final image = _clean(
         json['option${upper}ImageUrl'] ??
             json['option_${letters[i]}_image_url'] ??
+            json['option${upper}ImageFilename'] ??
+            json['option_${letters[i]}_image_filename'] ??
             json['option${i + 1}ImageUrl'] ??
             json['option${i + 1}_image_url'],
       );

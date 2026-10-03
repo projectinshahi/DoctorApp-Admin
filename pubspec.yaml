@@ -41,6 +41,8 @@ dependencies:
   http_parser: ^4.0.2
   video_player: ^2.9.2
   syncfusion_flutter_pdfviewer: ^27.1.58
+  # Reads the text out of an instruction sheet, so it can be stored as text.
+  syncfusion_flutter_pdf: ^27.2.5
   url_launcher: ^6.3.1
   youtube_player_iframe: ^5.2.0
   csv: ^8.0.0

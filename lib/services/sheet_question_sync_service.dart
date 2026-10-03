@@ -82,7 +82,10 @@ class SheetQuestionSyncService {
   /// a readable reason instead of arriving as a 400 with no row attached.
   static String? _rejectReason(SheetQuestion row) {
     if (row.questionText.trim().isEmpty) return 'no question text';
-    if (row.options.length < 2) return 'fewer than 2 options';
+    // Four is what a paper's answer key is written against: A to D. Below
+    // that the question reads as a fragment, and the student is asked to pick
+    // from options the examiner never set.
+    if (row.options.length < 4) return 'fewer than 4 options';
     if (row.options.length > 6) return 'more than 6 options';
     if (row.correctIndex == null) {
       return 'correct_option is ${row.correctOption}, '

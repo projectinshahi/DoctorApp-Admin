@@ -171,42 +171,6 @@ class _TestListScreenState extends State<TestListScreen>
     }
   }
 
-  /// DELETE /questions also unpublishes, so both consequences are spelled out
-  /// with the real count before anything is sent.
-  Future<void> _confirmClear(AdminTest test) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Remove all questions?'),
-        content: Text(
-          'This removes all ${test.questionCount} question'
-          '${test.questionCount == 1 ? '' : 's'}'
-          '${test.isPublished ? ' and unpublishes the test' : ''}.',
-          style: const TextStyle(fontSize: 13.5, height: 1.45),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: LmsColors.error),
-            child: const Text('Remove questions'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    final result = await _service.clearQuestions(test.id);
-    if (!mounted) return;
-    if (result.isSuccess) {
-      await _loadTests();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.errorMessage ?? 'That did not work')),
-      );
-    }
-  }
 
   /// Delete cascades to questions, images AND attempts, so unpublish leads.
   ///
@@ -447,7 +411,6 @@ class _TestListScreenState extends State<TestListScreen>
               onUpload: () => _openWizard(test: test, startAt: TestStep.upload),
               onReview: () => _openWizard(test: test, startAt: TestStep.review),
               onTogglePublish: () => _togglePublish(test),
-              onClear: () => _confirmClear(test),
               onDelete: () => _confirmDelete(test),
               onResults: () => _openResults(test),
               onEdit: () => _openEdit(test),
@@ -567,7 +530,6 @@ class _TestRow extends StatelessWidget {
   final VoidCallback onUpload;
   final VoidCallback onReview;
   final VoidCallback onTogglePublish;
-  final VoidCallback onClear;
   final VoidCallback onDelete;
   final VoidCallback onResults;
   final VoidCallback onEdit;
@@ -583,7 +545,6 @@ class _TestRow extends StatelessWidget {
     required this.onUpload,
     required this.onReview,
     required this.onTogglePublish,
-    required this.onClear,
     required this.onDelete,
     required this.onResults,
     required this.onEdit,
@@ -763,9 +724,6 @@ class _TestRow extends StatelessWidget {
                                 fontSize: 12, fontWeight: FontWeight.w800)),
                       ),
                     ),
-                  const SizedBox(width: 6),
-                  _Action('Clear', Icons.delete_outline_rounded, onClear,
-                      danger: true),
                 ],
               ],
               if (test.attemptCount > 0) ...[

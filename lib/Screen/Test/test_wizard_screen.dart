@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +8,10 @@ import '../../core/theam/theam_dart.dart';
 import '../../models/admin_test_model.dart';
 import '../../models/course_types_model.dart';
 import '../../services/admin_test_service.dart';
+import '../../services/csv_image_links.dart';
+import '../../services/file_download.dart';
+import '../../services/question_image_service.dart';
+import '../../services/pdf_text.dart';
 import '../../widget/question_image_view.dart';
 import '../../widget/shimmer_loading.dart';
 import 'test_error_table.dart';
@@ -65,6 +69,7 @@ class TestWizardScreen extends StatefulWidget {
 
 class _TestWizardScreenState extends State<TestWizardScreen> {
   final _service = AdminTestService();
+  final _imageService = QuestionImageService();
   final _formKey = GlobalKey<FormState>();
 
   late TestStep _step;
@@ -97,6 +102,17 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
 
   /// `?allowMissingImages=true`. Off by default - see the service.
   bool _allowMissingImages = false;
+
+  /// Uploaded pictures: filename in lower case -> the address it now lives at.
+  ///
+  /// A paper names its images (`q18_rhabdomyolysis.png`); the importer wants an
+  /// address. Holding the mapping here lets the CSV keep the names it was
+  /// written with - see [linkCsvImages].
+  final Map<String, String> _questionImages = {};
+  bool _uploadingImages = false;
+
+  /// Names the picked file asks for that nothing has been uploaded under.
+  List<String> _missingImages = const [];
 
   // ── Step 3 state ─────────────────────────────────────────────────
   TestPreview? _preview;
@@ -183,6 +199,46 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
     }
   }
 
+  /// Fills the instructions from an instruction sheet, as text.
+  ///
+  /// The server stores instructions as text, so the PDF is read rather than
+  /// attached: what it found lands in the field, where the admin can correct
+  /// it. Nothing about the paper has to be retyped, and nothing new has to be
+  /// hosted or kept in sync.
+  Future<void> _instructionsFromPdf() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['pdf'],
+      withData: true,
+    );
+    if (picked == null || picked.files.single.bytes == null) return;
+
+    try {
+      final text = _tidyPdfText(extractPdfText(picked.files.single.bytes!));
+      if (!mounted) return;
+      setState(() {
+        _instructionsController.text = text;
+        _error = null;
+      });
+    } on PdfTextException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'That PDF could not be read: $e');
+    }
+  }
+
+  /// PDF text carries the page's own line breaks. A blank line is a real
+  /// paragraph; a break mid-sentence is just where the column ended.
+  static String _tidyPdfText(String raw) => raw
+      .replaceAll('\r\n', '\n')
+      .split(RegExp(r'\n{2,}'))
+      .map((p) =>
+          p.replaceAll('\n', ' ').replaceAll(RegExp(r'[ \t]+'), ' ').trim())
+      .where((p) => p.isNotEmpty)
+      .join('\n\n');
+
   // ── Step 2 ───────────────────────────────────────────────────────
 
   Future<void> _pickAndUpload() async {
@@ -191,20 +247,16 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
       allowedExtensions: const ['csv'],
       withData: true, // web has no file path to read from
     );
-    if (picked == null || picked.files.single.bytes == null) return;
-
-    final bytes = picked.files.single.bytes!;
-    final name = picked.files.single.name;
-
-    // Counted locally so a row-count mismatch is caught before a round trip.
-    // A quoted question stem may contain newlines, so this is a floor, not a
-    // guarantee - the server still has the final say.
-    final rows = _countCsvRows(bytes);
+    final file = picked?.files.single;
+    if (file == null || file.bytes == null) return;
 
     setState(() {
-      _pickedFileName = name;
-      _pickedBytes = bytes;
-      _pickedRowCount = rows;
+      _pickedFileName = file.name;
+      _pickedBytes = file.bytes;
+      // Counted locally so a row-count mismatch is caught before a round
+      // trip. A quoted question stem may contain newlines, so this is a
+      // floor, not a guarantee - the server still has the final say.
+      _pickedRowCount = _countCsvRows(file.bytes!);
       _uploadResult = null;
       _error = null;
     });
@@ -212,17 +264,78 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
     await _sendPickedFile();
   }
 
+  /// Uploads the pictures the question file names.
+  ///
+  /// One request per file - that is what the endpoint takes - so a file that
+  /// is refused (over 2MB, or a format the server will not store) is reported
+  /// by name while the rest still land.
+  Future<void> _pickImages() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: QuestionImageService.allowedExtensions,
+      allowMultiple: true,
+      withData: true,
+    );
+    if (picked == null) return;
+
+    setState(() {
+      _uploadingImages = true;
+      _error = null;
+    });
+
+    final refused = <String>[];
+    for (final file in picked.files) {
+      final bytes = file.bytes;
+      if (bytes == null) continue;
+      final result =
+          await _imageService.upload(bytes: bytes, filename: file.name);
+      if (result.isSuccess) {
+        _questionImages[file.name.toLowerCase()] = result.image!.url;
+      } else {
+        refused.add('${file.name} - ${result.errorMessage}');
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _uploadingImages = false;
+      _error = refused.isEmpty ? null : refused.join('\n');
+      // Whatever was missing was measured against a smaller set of images.
+      _missingImages = const [];
+    });
+
+    // A refused upload saved nothing, and adding images at that point is an
+    // answer to it - so send the file again rather than leaving a red table on
+    // screen that is already out of date. A send that succeeded is left alone:
+    // repeating it would import the paper twice.
+    final sent = _uploadResult;
+    if (_pickedBytes != null && (sent == null || !sent.isSuccess)) {
+      await _sendPickedFile();
+    }
+  }
+
   /// Uploads whatever is already picked. Separate from picking so the same
-  /// file can be retried with [_allowMissingImages] flipped.
+  /// file can be retried with [_allowMissingImages] flipped, or after more
+  /// images have gone up.
   Future<void> _sendPickedFile() async {
     final bytes = _pickedBytes;
     final name = _pickedFileName;
     if (bytes == null || name == null || _test == null) return;
 
-    setState(() => _isBusy = true);
+    // The names in the file are swapped for addresses on the way out, so the
+    // sheet an admin wrote never has to carry a Cloudinary URL.
+    final linked =
+        linkCsvImages(utf8.decode(bytes, allowMalformed: true), _questionImages);
+
+    setState(() {
+      _isBusy = true;
+      _missingImages = linked.missing;
+    });
     final result = await _service.uploadQuestions(
       testId: _test!.id,
-      bytes: bytes,
+      bytes: linked.linked == 0
+          ? bytes
+          : Uint8List.fromList(utf8.encode(linked.csv)),
       filename: name,
       allowMissingImages: _allowMissingImages,
     );
@@ -439,6 +552,15 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
             _field(_instructionsController, 'Instructions for students (optional)',
                 hint: 'Read every question carefully. No going back.',
                 maxLines: 3),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _isBusy ? null : _instructionsFromPdf,
+                icon: const Icon(Icons.picture_as_pdf_outlined, size: 17),
+                label: const Text('Load from a PDF',
+                    style: TextStyle(fontSize: 12.5)),
+              ),
+            ),
             const SizedBox(height: 14),
 
             _examTypeDropdown(),
@@ -605,12 +727,24 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
             enabled: !_isBusy,
             onChanged: (v) => setState(() => _allowMissingImages = v),
           ),
+          const SizedBox(height: 12),
+
+          // Pictures go up before the file that names them. The importer
+          // resolves an image cell to something it can serve, and a name it
+          // has never seen fails the whole row.
+          _QuestionImagesBox(
+            uploaded: _questionImages.length,
+            busy: _uploadingImages,
+            onPick: _isBusy || _uploadingImages ? null : _pickImages,
+          ),
           const SizedBox(height: 16),
 
           Row(
             children: [
               _PrimaryButton(
-                label: _pickedFileName == null ? 'Choose CSV file' : 'Choose another file',
+                label: _pickedFileName == null
+                    ? 'Choose CSV file'
+                    : 'Choose another file',
                 busy: _isBusy,
                 onPressed: _pickAndUpload,
                 icon: Icons.upload_file_rounded,
@@ -621,6 +755,11 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
                 icon: const Icon(Icons.description_outlined, size: 17),
                 label: const Text('CSV format'),
               ),
+              TextButton.icon(
+                onPressed: _downloadTemplate,
+                icon: const Icon(Icons.download_outlined, size: 17),
+                label: const Text('Download template'),
+              ),
             ],
           ),
 
@@ -628,8 +767,32 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
             const SizedBox(height: 14),
             Text(
               '$_pickedFileName'
-              '${_pickedRowCount != null ? ' · $_pickedRowCount question rows' : ''}',
+              '${_pickedRowCount != null ? ' · $_pickedRowCount question rows' : ''}'
+              '${_questionImages.isNotEmpty ? ' · ${_questionImages.length} image'
+                  '${_questionImages.length == 1 ? '' : 's'} uploaded' : ''}',
               style: const TextStyle(fontSize: 12.5, color: LmsColors.textGrey),
+            ),
+          ],
+
+          // Said here because the server's version of it is one row-level
+          // error per picture, buried in a table of 150.
+          if (_missingImages.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _UploadBanner(
+              color: const Color(0xFFB8860B),
+              icon: Icons.image_not_supported_outlined,
+              title: '${_missingImages.length} image'
+                  '${_missingImages.length == 1 ? ' is' : 's are'} named in the '
+                  'file but not uploaded',
+              body: '${_missingImages.take(8).join(', ')}'
+                  '${_missingImages.length > 8 ? ', and ${_missingImages.length - 8} more' : ''}. '
+                  'Add them above and send the file again, or tick "Import now, '
+                  'add images later" to bring those rows in without a picture.',
+              action: _BannerButton(
+                label: 'Add images',
+                busy: _uploadingImages,
+                onPressed: _pickImages,
+              ),
             ),
           ],
 
@@ -717,6 +880,18 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
     );
   }
 
+  /// The columns the importer reads, as the row the template carries.
+  ///
+  /// Headers only when downloaded: a template with sample rows in it comes
+  /// back uploaded with the samples still there.
+  static const _templateHeader =
+      'question_order,question_text,question_image_filename,'
+      'option_a,option_b,option_c,option_d,option_e,option_f,'
+      'correct_option,explanation,subject,topic';
+
+  void _downloadTemplate() =>
+      downloadTextFile('test_questions_template.csv', '$_templateHeader\n');
+
   void _showTemplate() {
     showDialog<void>(
       context: context,
@@ -726,15 +901,29 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
         content: const SingleChildScrollView(
           child: Text(
             'Header row, then one row per question:\n\n'
-            'question_text,option_a,option_b,option_c,option_d,'
-            'correct_option,explanation,section,question_image_url\n\n'
-            'correct_option must be A, B, C or D.\n\n'
-            'section groups questions into named parts of the paper. '
-            'Optional - leave it blank for an ungrouped test.\n\n'
-            'IMAGES. question_image_url takes either form, and '
-            'question_image_filename is the same column under another name '
+            '$_templateHeader\n\n'
+            '"Download template" saves exactly that row as an empty file to '
+            'fill in.\n\n'
+            'OPTIONS. Four to six, and it is per question - a paper may mix '
+            'them. option_a to option_d are required on every row. option_e '
+            'and option_f are for the questions that carry five or six '
+            'answers; leave them blank on the rest. Fewer than four is '
+            'refused.\n\n'
+            'correct_option is the answer\'s letter, A to F, and it has to '
+            'point at an option that is filled in. option_f filled with '
+            'option_e blank is also refused: the letters would close up and '
+            'the answer key would address the wrong option.\n\n'
+            'question_order is the question number on the paper.\n\n'
+            'subject and topic group a question, the same way your own import '
+            'sheets do. Optional. A section column is read too, for a paper '
+            'split into named parts.\n\n'
+            'IMAGES. Upload the pictures with "Add images" first, then name '
+            'them in the file exactly as the files are named. They are swapped '
+            'for their addresses as the file is sent.\n\n'
+            'question_image_filename takes either form below, and '
+            'question_image_url is the same column under another name '
             '(case-insensitive). Both apply to option_a_image_url through '
-            'option_d_image_url too.\n\n'
+            'option_f_image_url too.\n\n'
             'https://res.cloudinary.com/.../ecg.svg\n'
             '    A full address. Always works, from any host.\n\n'
             'ecg.svg\n'
@@ -744,8 +933,8 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
             '"Import now, add images later" to bring those rows in without '
             'their pictures.\n\n'
             'A question can be an image with no text, and so can an option. '
-            'Leave question_text blank and fill question_image_url. Only a '
-            'row with neither is an error.\n\n'
+            'Leave question_text blank and fill question_image_filename. Only '
+            'a row with neither is an error.\n\n'
             'Wrap any field containing a comma in double quotes:\n'
             '"A 54-year-old, previously well, presents with...",...\n\n'
             'To include a double quote inside a quoted field, double it: "".',
@@ -753,7 +942,13 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          TextButton.icon(
+            onPressed: _downloadTemplate,
+            icon: const Icon(Icons.download_outlined, size: 17),
+            label: const Text('Download template'),
+          ),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
         ],
       ),
     );
@@ -820,12 +1015,6 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
           ),
           const SizedBox(height: 18),
 
-          for (var i = 0; i < questions.length; i++) ...[
-            _PreviewCard(question: questions[i], number: i + 1),
-            const SizedBox(height: 10),
-          ],
-
-          const SizedBox(height: 8),
           Row(
             children: [
               _PrimaryButton(
@@ -866,6 +1055,12 @@ class _TestWizardScreenState extends State<TestWizardScreen> {
               'Save it as a draft — nothing is lost, and you can publish from '
               'the test list once the paper is complete.',
             ),
+          ],
+          const SizedBox(height: 18),
+
+          for (var i = 0; i < questions.length; i++) ...[
+            _PreviewCard(question: questions[i], number: i + 1),
+            const SizedBox(height: 10),
           ],
         ],
       ),
@@ -1269,6 +1464,83 @@ class _PreviewCard extends StatelessWidget {
 ///
 /// Off by default. Worded as what it costs rather than what it enables: the
 /// rows import, but every question that needed a diagram arrives without one.
+/// Uploading the pictures a question file names.
+///
+/// Separate from the file itself because the order matters: an image cell is
+/// resolved as the CSV is sent, so anything uploaded afterwards is too late
+/// for the rows that asked for it.
+class _QuestionImagesBox extends StatelessWidget {
+  final int uploaded;
+  final bool busy;
+  final VoidCallback? onPick;
+
+  const _QuestionImagesBox({
+    required this.uploaded,
+    required this.busy,
+    required this.onPick,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: LmsColors.bg,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: LmsColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            uploaded == 0 ? Icons.image_outlined : Icons.image_rounded,
+            size: 19,
+            color: uploaded == 0 ? LmsColors.textGrey : LmsColors.primary,
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Question images',
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(
+                  uploaded == 0
+                      ? 'Upload the pictures your file names - '
+                          'q18_rhabdomyolysis.png and the like - before the '
+                          'CSV. Rows that carry https:// links need none.'
+                      : '$uploaded uploaded. Your file can keep the names it '
+                          'was written with; they are swapped for addresses as '
+                          'it is sent.',
+                  style: const TextStyle(
+                      fontSize: 12, height: 1.35, color: LmsColors.textGrey),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          TextButton.icon(
+            onPressed: busy ? null : onPick,
+            icon: busy
+                ? const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.add_photo_alternate_outlined, size: 18),
+            label: Text(busy
+                ? 'Uploading...'
+                : uploaded == 0
+                    ? 'Add images'
+                    : 'Add more'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AllowMissingImagesBox extends StatelessWidget {
   final bool value;
   final bool enabled;

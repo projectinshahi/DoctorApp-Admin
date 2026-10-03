@@ -38,6 +38,18 @@ class QuestionImageView extends StatelessWidget {
 
   /// Decided by the URL's extension, not by any `format` field: the question
   /// row stores only the URL, so the extension is all that travels with it.
+  /// Whether the stored cell is somewhere a browser can fetch from.
+  ///
+  /// The importer accepts a bare filename, so a question can end up holding
+  /// `q18_rhabdomyolysis.png` - a name that was never swapped for an address
+  /// because the picture was not uploaded before the file was. Rendering that
+  /// as a broken image blames the host for something the admin can fix in a
+  /// minute, so it is told apart here.
+  static bool isAddress(String url) {
+    final scheme = Uri.tryParse(url.trim())?.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https';
+  }
+
   static bool isSvg(String url) =>
       (Uri.tryParse(url)?.path.toLowerCase() ?? url.toLowerCase())
           .endsWith('.svg');
@@ -46,6 +58,13 @@ class QuestionImageView extends StatelessWidget {
   Widget build(BuildContext context) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return const SizedBox.shrink();
+
+    if (!isAddress(trimmed)) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: _chip('Not uploaded: $trimmed'),
+      );
+    }
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -66,7 +85,7 @@ class QuestionImageView extends StatelessWidget {
                   webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
                   loadingBuilder: (_, child, progress) =>
                       progress == null ? child : _loading(),
-                  errorBuilder: (_, _, _) => _unavailable(),
+                  errorBuilder: (_, _, _) => _chip('Image unavailable'),
                 ),
         ),
       ),
@@ -91,21 +110,27 @@ class QuestionImageView extends StatelessWidget {
   /// something the admin usually cannot act on from here. A missing figure
   /// still has to be visible - a silently absent image reads as a question
   /// that never had one - so it leaves a mark, not an alarm.
-  Widget _unavailable() => Container(
+  Widget _chip(String message) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: LmsColors.bg,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: LmsColors.border),
         ),
-        child: const Row(
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.image_not_supported_outlined,
+            const Icon(Icons.image_not_supported_outlined,
                 size: 15, color: LmsColors.textGrey),
-            SizedBox(width: 7),
-            Text('Image unavailable',
-                style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey)),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                message,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 11.5, color: LmsColors.textGrey),
+              ),
+            ),
           ],
         ),
       );

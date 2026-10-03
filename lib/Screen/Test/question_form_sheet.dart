@@ -1,8 +1,11 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/theam/theam_dart.dart';
 import '../../models/admin_test_model.dart';
 import '../../services/admin_test_service.dart';
+import '../../services/question_image_service.dart';
+import '../../widget/question_image_view.dart';
 
 /// Add or edit one question.
 ///
@@ -37,8 +40,65 @@ class QuestionFormSheet extends StatefulWidget {
   State<QuestionFormSheet> createState() => _QuestionFormSheetState();
 }
 
+/// The option letters a test question can use. A to D are the paper's usual
+/// four; E and F are optional, because some questions carry six and dropping
+/// them here would delete two answers the CSV imported correctly.
+const List<String> questionOptionLetters = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+/// Below this index an option must be filled in.
+const int requiredQuestionOptions = 4;
+
+/// How many option rows an existing question opens with: the four required
+/// ones, plus however many extras it already carries.
+int visibleQuestionOptions(int optionCount) => optionCount
+    .clamp(requiredQuestionOptions, questionOptionLetters.length)
+    .toInt();
+
+/// Why this set of options cannot be saved, or null when it can.
+///
+/// [filled] is one flag per letter, in letter order: an option counts as
+/// filled when it has text, an image, or both. [visible] is how many rows the
+/// admin can see - a row on screen has to be filled, which is also why Save
+/// is disabled rather than letting the server explain an empty row.
+String? questionOptionProblem(
+  List<bool> filled,
+  String correct, {
+  int visible = requiredQuestionOptions,
+}) {
+  for (var i = 0; i < visible && i < filled.length; i++) {
+    if (!filled[i]) {
+      return 'Option ${questionOptionLetters[i]} needs text or an image';
+    }
+  }
+
+  // No holes: the paper addresses options by letter, so a filled F behind an
+  // empty E would renumber every answer under a key written against the
+  // original letters.
+  for (var i = requiredQuestionOptions; i < filled.length - 1; i++) {
+    if (!filled[i] && filled[i + 1]) {
+      return 'Option ${questionOptionLetters[i + 1]} is filled but Option '
+          '${questionOptionLetters[i]} is empty - fill '
+          '${questionOptionLetters[i]}, or move '
+          '${questionOptionLetters[i + 1]} into it';
+    }
+  }
+
+  if (!questionAnswerLetters(filled).contains(correct)) {
+    return 'The correct answer is $correct, which is empty';
+  }
+  return null;
+}
+
+/// The letters an answer may point at: only the options that actually hold
+/// something. Offering an empty one lets an admin key the answer to a blank.
+List<String> questionAnswerLetters(List<bool> filled) => [
+      for (var i = 0; i < questionOptionLetters.length; i++)
+        if (filled[i]) questionOptionLetters[i],
+    ];
+
 class _QuestionFormSheetState extends State<QuestionFormSheet> {
   final _service = AdminTestService();
+  final _imageService = QuestionImageService();
   final _formKey = GlobalKey<FormState>();
 
   late final _questionText = TextEditingController();
@@ -49,8 +109,8 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
   late final _topic = TextEditingController();
   late final _order = TextEditingController();
 
-  final _optionText = List.generate(4, (_) => TextEditingController());
-  final _optionImage = List.generate(4, (_) => TextEditingController());
+  final _optionText = List.generate(_letters.length, (_) => TextEditingController());
+  final _optionImage = List.generate(_letters.length, (_) => TextEditingController());
 
   String _correct = 'A';
   bool _isBusy = false;
@@ -59,9 +119,52 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
   /// Field-level problems from the server's 400, shown under the field named.
   Map<String, String> _problems = const {};
 
-  static const _letters = ['A', 'B', 'C', 'D'];
+  static const _letters = questionOptionLetters;
+  static const _requiredOptions = requiredQuestionOptions;
+
+  bool _filled(int i) =>
+      _optionText[i].text.trim().isNotEmpty ||
+      _optionImage[i].text.trim().isNotEmpty;
+
+  List<bool> get _filledFlags =>
+      [for (var i = 0; i < _letters.length; i++) _filled(i)];
+
+  /// Rows on screen. A to D always; E and F arrive through Add option.
+  int _visible = requiredQuestionOptions;
+
+  /// A sixth is the ceiling, and the next letter only opens once the one
+  /// before it holds something - which is what keeps E from being empty under
+  /// a filled F.
+  bool get _canAdd => _visible < _letters.length && _filled(_visible - 1);
 
   bool get _isEdit => widget.existing != null;
+
+  /// Typing anywhere changes what can be saved and which letters the answer
+  /// can point at, so the form rebuilds on every keystroke.
+  void _refresh(String _) => setState(() {});
+
+  void _addOption() => setState(() => _visible++);
+
+  /// Removing E pulls F up into it rather than leaving a hole, and the answer
+  /// follows the letter it was pointing at.
+  void _removeOption(int index) {
+    setState(() {
+      for (var i = index; i < _letters.length - 1; i++) {
+        _optionText[i].text = _optionText[i + 1].text;
+        _optionImage[i].text = _optionImage[i + 1].text;
+      }
+      _optionText.last.clear();
+      _optionImage.last.clear();
+      _visible--;
+
+      final at = _letters.indexOf(_correct);
+      if (at == index) {
+        _correct = _letters.first; // the answer went with the option
+      } else if (at > index) {
+        _correct = _letters[at - 1];
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -78,10 +181,11 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
       _correct = q.correctOption.trim().toUpperCase().isEmpty
           ? 'A'
           : q.correctOption.trim().toUpperCase();
-      for (var i = 0; i < 4 && i < q.options.length; i++) {
+      for (var i = 0; i < _letters.length && i < q.options.length; i++) {
         _optionText[i].text = q.options[i].text;
         _optionImage[i].text = q.options[i].imageUrl ?? '';
       }
+      _visible = visibleQuestionOptions(q.options.length);
     } else {
       _order.text = '${widget.nextOrder}';
     }
@@ -105,18 +209,101 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
     super.dispose();
   }
 
+  /// Picks a picture, uploads it, and drops the address it comes back with
+  /// into [controller].
+  ///
+  /// The field stays an ordinary text field: a picture already hosted
+  /// somewhere is still pasted in by hand, and nothing about an imported
+  /// question becomes uneditable.
+  Future<void> _uploadInto(TextEditingController controller) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: QuestionImageService.allowedExtensions,
+      withData: true,
+    );
+    final file = picked?.files.single;
+    if (file == null || file.bytes == null) return;
+
+    setState(() => _isBusy = true);
+    final result =
+        await _imageService.upload(bytes: file.bytes!, filename: file.name);
+
+    if (!mounted) return;
+    setState(() {
+      _isBusy = false;
+      if (result.isSuccess) {
+        controller.text = result.image!.url;
+        _error = null;
+      } else {
+        _error = result.errorMessage;
+      }
+    });
+  }
+
+  /// An image field: the address, a button that uploads one, and the picture.
+  ///
+  /// The picture is the point. An address says nothing about whether the right
+  /// figure is attached - a nephrostomy diagram under a rhabdomyolysis
+  /// question reads as correct until someone looks at it.
+  Widget _imageField(
+    TextEditingController controller,
+    String label, {
+    bool dense = false,
+    String? errorText,
+  }) {
+    final url = controller.text.trim();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _field(controller, label,
+            hint: 'https://... or upload one',
+            dense: dense,
+            errorText: errorText,
+            suffix: _uploadButton(controller),
+            onChanged: _refresh),
+        if (url.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Flexible(
+                child: QuestionImageView(
+                    url: url, maxHeight: dense ? 120 : 170),
+              ),
+              IconButton(
+                tooltip: 'Remove this image',
+                onPressed: _isBusy
+                    ? null
+                    : () {
+                        controller.clear();
+                        _refresh('');
+                      },
+                icon: const Icon(Icons.close_rounded, size: 17),
+                color: LmsColors.textGrey,
+                splashRadius: 18,
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _uploadButton(TextEditingController controller) => IconButton(
+        tooltip: 'Upload an image',
+        onPressed: _isBusy ? null : () => _uploadInto(controller),
+        icon: const Icon(Icons.add_photo_alternate_outlined, size: 19),
+        color: LmsColors.primary,
+        splashRadius: 20,
+      );
+
   /// Text or image, never neither.
   String? _missing() {
     if (_questionText.text.trim().isEmpty && _questionImage.text.trim().isEmpty) {
       return 'The question needs text or an image';
     }
-    for (var i = 0; i < 4; i++) {
-      if (_optionText[i].text.trim().isEmpty &&
-          _optionImage[i].text.trim().isEmpty) {
-        return 'Option ${_letters[i]} needs text or an image';
-      }
-    }
-    return null;
+    return questionOptionProblem(_filledFlags, _correct, visible: _visible);
   }
 
   /// Empty strings are sent, not dropped: `""` clears a field on the server,
@@ -127,7 +314,9 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
     return {
       'questionText': _questionText.text.trim(),
       'questionImageUrl': _questionImage.text.trim(),
-      for (var i = 0; i < 4; i++) ...{
+      // All six are sent, empty included: "" is what clears an option that
+      // was there before, and a key left out would leave it in place.
+      for (var i = 0; i < _letters.length; i++) ...{
         'option${_letters[i]}': _optionText[i].text.trim(),
         'option${_letters[i]}ImageUrl': _optionImage[i].text.trim(),
       },
@@ -225,45 +414,51 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
 
                       _field(_questionText, 'Question',
                           maxLines: 3,
+                          onChanged: _refresh,
                           errorText: _problemFor('question_text') ??
                               _problemFor('questionText')),
                       const SizedBox(height: 12),
-                      _field(_questionImage, 'Question image URL',
-                          hint: 'https://...',
+                      _imageField(_questionImage, 'Question image URL',
                           errorText: _problemFor('question_image_url')),
                       const SizedBox(height: 20),
 
-                      for (var i = 0; i < 4; i++) ...[
-                        _optionBlock(i),
-                        const SizedBox(height: 14),
-                      ],
-
-                      const SizedBox(height: 4),
-                      const Text('Correct answer',
+                      const Text('Options  -  tick the correct one',
                           style: TextStyle(
                               fontSize: 12.5, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          for (final letter in _letters)
-                            ChoiceChip(
-                              label: Text(letter),
-                              selected: _correct == letter,
-                              onSelected: (_) =>
-                                  setState(() => _correct = letter),
-                              selectedColor: LmsColors.primarySoft,
-                              labelStyle: TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w800,
-                                color: _correct == letter
-                                    ? LmsColors.primary
-                                    : LmsColors.textDark,
-                              ),
-                            ),
-                        ],
+
+                      RadioGroup<String>(
+                        groupValue: _correct,
+                        onChanged: (value) =>
+                            setState(() => _correct = value ?? _correct),
+                        child: Column(
+                          children: [
+                            for (var i = 0; i < _visible; i++) ...[
+                              _optionBlock(i),
+                              const SizedBox(height: 14),
+                            ],
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 20),
+
+                      if (_visible < _letters.length)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            // Opens only once the option before it holds
+                            // something, so E can never be empty under F.
+                            onPressed: _canAdd ? _addOption : null,
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            label: Text(
+                              _canAdd
+                                  ? 'Add option ${_letters[_visible]}'
+                                  : 'Fill option ${_letters[_visible - 1]} to '
+                                      'add another',
+                              style: const TextStyle(fontSize: 12.5),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 16),
 
                       _field(_explanation, 'Explanation', maxLines: 2),
                       const SizedBox(height: 14),
@@ -316,15 +511,24 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  if (_missing() != null)
+                    Expanded(
+                      child: Text(
+                        _missing()!,
+                        style: const TextStyle(
+                            fontSize: 12, color: LmsColors.textGrey),
+                      ),
+                    )
+                  else
+                    const Spacer(),
                   TextButton(
                     onPressed: _isBusy ? null : () => Navigator.pop(context),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 10),
                   FilledButton(
-                    onPressed: _isBusy ? null : _save,
+                    onPressed: _isBusy || _missing() != null ? null : _save,
                     style: FilledButton.styleFrom(
                       backgroundColor: LmsColors.primary,
                       padding: const EdgeInsets.symmetric(
@@ -375,21 +579,54 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
         children: [
           Row(
             children: [
+              // A radio, not a checkbox: a second correct answer has to be
+              // impossible to express, not merely rejected on save. An empty
+              // option cannot be chosen at all.
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: Radio<String>(
+                  value: letter,
+                  // An empty option cannot be chosen at all.
+                  enabled: _filled(i),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              const SizedBox(width: 6),
               Text('Option $letter',
                   style: const TextStyle(
                       fontSize: 12.5, fontWeight: FontWeight.w800)),
+              if (i >= _requiredOptions) ...[
+                const SizedBox(width: 6),
+                const Text('optional',
+                    style: TextStyle(fontSize: 11, color: LmsColors.textGrey)),
+              ],
               if (_correct == letter) ...[
                 const SizedBox(width: 8),
-                const Icon(Icons.check_circle_rounded,
-                    size: 14, color: LmsColors.primary),
+                const Text('correct answer',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: LmsColors.primary)),
               ],
+              const Spacer(),
+              if (i >= _requiredOptions)
+                TextButton.icon(
+                  onPressed: () => _removeOption(i),
+                  icon: const Icon(Icons.close_rounded, size: 15),
+                  label: const Text('Remove',
+                      style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(
+                      foregroundColor: LmsColors.textGrey,
+                      visualDensity: VisualDensity.compact),
+                ),
             ],
           ),
           const SizedBox(height: 8),
-          _field(_optionText[i], 'Text', dense: true),
+          _field(_optionText[i], 'Text', dense: true, onChanged: _refresh),
           const SizedBox(height: 8),
-          _field(_optionImage[i], 'Image URL',
-              hint: 'https://...', dense: true, errorText: problem),
+          _imageField(_optionImage[i], 'Image URL',
+              dense: true, errorText: problem),
         ],
       ),
     );
@@ -433,6 +670,8 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
     bool dense = false,
     String? errorText,
     TextInputType? keyboardType,
+    ValueChanged<String>? onChanged,
+    Widget? suffix,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -447,12 +686,14 @@ class _QuestionFormSheetState extends State<QuestionFormSheet> {
           controller: controller,
           maxLines: maxLines,
           keyboardType: keyboardType,
+          onChanged: onChanged,
           style: const TextStyle(fontSize: 13),
           decoration: InputDecoration(
             hintText: hint,
             hintStyle:
                 const TextStyle(fontSize: 12.5, color: LmsColors.textGrey),
             errorText: errorText,
+            suffixIcon: suffix,
             filled: true,
             fillColor: Colors.white,
             isDense: dense,
