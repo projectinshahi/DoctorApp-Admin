@@ -17,6 +17,16 @@ class Lesson {
   final String? noteFileType;
   final String? content;            // quiz reference
 
+  /// The quiz attached to this lesson, if any. No longer tied to
+  /// `type == 'quiz'`: a video lesson can carry a quiz too.
+  final int? quizId;
+
+  /// Every video on this lesson, in order. [videoUrl] above is videos.first.
+  final List<LessonVideo> videos;
+
+  /// The Rapid Recall decks filed against this lesson. Read-only.
+  final List<LessonDeck> rapidRecalls;
+
   /// Optional, and for filtering only: it does not change what a student
   /// sees. A quiz lesson with none borrows its quiz's subject server-side.
   final int? subjectId;
@@ -44,6 +54,9 @@ class Lesson {
     this.notePublicId,
     this.noteFileType,
     this.content,
+    this.quizId,
+    this.videos = const [],
+    this.rapidRecalls = const [],
     this.subjectId,
     required this.displayOrder,
     required this.isFreePreview,
@@ -71,6 +84,9 @@ class Lesson {
       notePublicId: json['notePublicId'] as String?,
       noteFileType: json['noteFileType'] as String?,
       content: json['content'] as String?,
+      quizId: (json['quizId'] as num?)?.toInt(),
+      videos: parseLessonVideos(json),
+      rapidRecalls: parseLessonDecks(json),
       subjectId: (json['subjectId'] as num?)?.toInt(),
       displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
       isFreePreview: json['isFreePreview'] as bool? ?? false,
@@ -99,6 +115,8 @@ class Lesson {
       'notePublicId': notePublicId,
       'noteFileType': noteFileType,
       'content': content,
+      'quizId': quizId,
+      'videos': [for (final v in videos) v.toJson()],
       'subjectId': subjectId,
       'displayOrder': displayOrder,
       'isFreePreview': isFreePreview,
@@ -109,7 +127,10 @@ class Lesson {
     };
   }
 
-  bool get hasVideo => videoUrl != null && videoUrl!.isNotEmpty;
+  bool get hasVideo => videos.isNotEmpty || (videoUrl != null && videoUrl!.isNotEmpty);
+  bool get hasQuiz => quizId != null;
+  int get videoCount => videos.length;
+  int get deckCount => rapidRecalls.length;
   bool get hasThumbnail => thumbnailUrl != null && thumbnailUrl!.isNotEmpty;
   bool get hasNote => noteUrl != null && noteUrl!.isNotEmpty;
   bool get hasDescription => description != null && description!.trim().isNotEmpty;

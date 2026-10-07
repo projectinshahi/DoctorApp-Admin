@@ -209,6 +209,12 @@ class Lesson {
   /// so the list never claims a video exists when it doesn't.
   final bool videoKnown; // NEW
 
+  /// How many videos and Rapid Recall decks the lesson holds. The tree sends
+  /// the counts rather than the rows — the row draws "3 videos · 1 deck" and
+  /// never the videos themselves.
+  final int videoCount;
+  final int deckCount;
+
   Lesson({
     required this.id,
     required this.title,
@@ -223,6 +229,8 @@ class Lesson {
     this.planIds = const {}, // NEW
     this.videoUrl, // NEW
     this.videoKnown = false, // NEW
+    this.videoCount = 0,
+    this.deckCount = 0,
     this.quizId,
     this.quizSubjectName,
     this.quizTopicName,
@@ -240,8 +248,11 @@ class Lesson {
   /// null  -> the API didn't include videoUrl, so we make no claim
   /// true  -> a video is actually attached
   /// false -> definitively no video, even though the lesson may be type 'video'
-  bool? get hasVideo =>
-      !videoKnown ? null : (videoUrl != null && videoUrl!.isNotEmpty);
+  bool? get hasVideo => videoCount > 0
+      ? true
+      : (!videoKnown ? null : (videoUrl != null && videoUrl!.isNotEmpty));
+
+  bool get hasQuiz => quizId != null;
 
   factory Lesson.fromJson(Map<String, dynamic> json) => Lesson(
     id: json["id"],
@@ -257,10 +268,23 @@ class Lesson {
     planIds: parseLessonPlanIds(json), // NEW
     videoUrl: json["videoUrl"], // NEW
     videoKnown: json.containsKey("videoUrl"), // NEW
+    // A response from before the counts existed falls back to the single
+    // videoUrl, so an old server still draws the row right.
+    videoCount: _count(json, "videos") ??
+        ((json["videoUrl"] as String?)?.trim().isNotEmpty == true ? 1 : 0),
+    deckCount: _count(json, "rapidRecalls") ?? 0,
     quizId: (json["quizId"] as num?)?.toInt(),
     quizSubjectName: _nestedName(json["quiz"], "subject"),
     quizTopicName: _nestedName(json["quiz"], "topic"),
   );
+
+  /// One number out of Prisma's `_count` block, or null when the server did
+  /// not send one.
+  static int? _count(Map<String, dynamic> json, String key) {
+    final counts = json["_count"];
+    if (counts is! Map) return null;
+    return (counts[key] as num?)?.toInt();
+  }
 
   /// Reads quiz.subject.name / quiz.topic.name without assuming either level
   /// is present - every hop is optional in this payload.

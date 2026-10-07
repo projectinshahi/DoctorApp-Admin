@@ -33,6 +33,7 @@ class LessonUpdateProvider extends ChangeNotifier {
     required LessonType type,
     String? videoUrl,
     String? videoPublicId,
+    List<Map<String, dynamic>>? videos, // NEW - the whole video list
     String? thumbnailUrl,
     String? thumbnailPublicId,
     String? noteUrl,
@@ -59,6 +60,7 @@ class LessonUpdateProvider extends ChangeNotifier {
       type: type,
       videoUrl: videoUrl,
       videoPublicId: videoPublicId,
+      videos: videos, // NEW
       thumbnailUrl: thumbnailUrl,
       thumbnailPublicId: thumbnailPublicId,
       noteUrl: noteUrl,
@@ -100,6 +102,7 @@ class LessonUpdateProvider extends ChangeNotifier {
     String? videoUrl,
     String? videoPublicId,
     bool removeVideo = false,
+    List<Map<String, dynamic>>? videos, // NEW - replace-all
     String? thumbnailUrl,
     String? thumbnailPublicId,
     bool removeThumbnail = false,
@@ -133,6 +136,7 @@ class LessonUpdateProvider extends ChangeNotifier {
       videoUrl: videoUrl,
       videoPublicId: videoPublicId,
       removeVideo: removeVideo,
+      videos: videos, // NEW
       thumbnailUrl: thumbnailUrl,
       thumbnailPublicId: thumbnailPublicId,
       removeThumbnail: removeThumbnail,

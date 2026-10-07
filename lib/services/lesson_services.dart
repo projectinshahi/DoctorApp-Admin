@@ -229,6 +229,10 @@ class LessonService {
     required LessonType type,
     String? videoUrl,
     String? videoPublicId,
+    /// The lesson's whole video list, already shaped by LessonVideo.toJson().
+    /// Sent instead of videoUrl/videoPublicId: the server numbers the rows
+    /// from this array's order and mirrors the first onto the old columns.
+    List<Map<String, dynamic>>? videos,
     String? thumbnailUrl,
     String? thumbnailPublicId,
     String? noteUrl,
@@ -255,8 +259,12 @@ class LessonService {
       'type': type.apiValue,
     };
     if (description != null) body['description'] = description;
-    if (videoUrl != null) body['videoUrl'] = videoUrl;
-    if (videoPublicId != null) body['videoPublicId'] = videoPublicId;
+    if (videos != null) {
+      body['videos'] = videos;
+    } else {
+      if (videoUrl != null) body['videoUrl'] = videoUrl;
+      if (videoPublicId != null) body['videoPublicId'] = videoPublicId;
+    }
     if (thumbnailUrl != null) body['thumbnailUrl'] = thumbnailUrl;
     if (thumbnailPublicId != null) body['thumbnailPublicId'] = thumbnailPublicId;
     if (noteUrl != null) body['noteUrl'] = noteUrl;
@@ -308,6 +316,9 @@ class LessonService {
     String? videoUrl,
     String? videoPublicId,
     bool removeVideo = false,
+    /// The whole list, replace-all. [] clears every video. Null leaves them
+    /// alone, which is what a save that never opened the video section means.
+    List<Map<String, dynamic>>? videos,
     String? thumbnailUrl,
     String? thumbnailPublicId,
     bool removeThumbnail = false,
@@ -350,7 +361,11 @@ class LessonService {
       body['description'] = description;
     }
 
-    if (removeVideo) {
+    // `videos` is the whole truth when it is sent — the server clears the old
+    // columns from it, so removeVideo has nothing left to do.
+    if (videos != null) {
+      body['videos'] = videos;
+    } else if (removeVideo) {
       body['videoUrl'] = null;
       body['videoPublicId'] = null;
     } else {

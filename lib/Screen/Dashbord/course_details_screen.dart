@@ -287,6 +287,8 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       initialType: full.typeEnum,
       initialVideoUrl: full.videoUrl,
       initialVideoPublicId: full.videoPublicId,
+      initialVideos: full.videos,
+      initialRapidRecalls: full.rapidRecalls,
       initialThumbnailUrl: full.thumbnailUrl,
       initialThumbnailPublicId: full.thumbnailPublicId,
       initialNoteUrl: full.noteUrl,

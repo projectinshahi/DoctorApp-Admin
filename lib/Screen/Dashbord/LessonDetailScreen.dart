@@ -199,6 +199,8 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
       initialType: lesson.typeEnum,
       initialVideoUrl: lesson.videoUrl,
       initialVideoPublicId: lesson.videoPublicId,
+      initialVideos: lesson.videos,
+      initialRapidRecalls: lesson.rapidRecalls,
       initialThumbnailUrl: lesson.thumbnailUrl,
       initialThumbnailPublicId: lesson.thumbnailPublicId,
       initialNoteUrl: lesson.noteUrl,
@@ -1322,6 +1324,9 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
             // immediately instead of waiting on the course plan list.
             planLabels: _planLabels(lesson),
             hasVideo: lesson.hasVideo,
+                        videoCount: lesson.videoCount,
+                        hasQuiz: lesson.hasQuiz,
+                        deckCount: lesson.deckCount,
           ),
         ],
       ),

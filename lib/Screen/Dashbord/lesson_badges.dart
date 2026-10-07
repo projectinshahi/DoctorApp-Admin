@@ -96,6 +96,17 @@ class LessonBadgeRow extends StatelessWidget {
   /// true  -> a video is attached
   /// false -> no video, even if the lesson is typed 'video'
   final bool? hasVideo;
+
+  /// How many videos the lesson holds. A lesson is a container now, so the
+  /// row says what is in it rather than what it is typed as.
+  final int videoCount;
+
+  /// Whether a quiz is attached, whatever the lesson leads with.
+  final bool hasQuiz;
+
+  /// Rapid Recall decks filed against the lesson.
+  final int deckCount;
+
   final bool compact;
 
   /// Hide the type badge where the row already shows the type another way.
@@ -110,6 +121,9 @@ class LessonBadgeRow extends StatelessWidget {
     this.planLabels = const [],
     this.maxPlanBadges = 2,
     this.hasVideo,
+    this.videoCount = 0,
+    this.hasQuiz = false,
+    this.deckCount = 0,
     this.compact = false,
     this.showType = true,
   });
@@ -122,6 +136,7 @@ class LessonBadgeRow extends StatelessWidget {
     // For video lessons the type badge doubles as the media indicator, so a
     // play icon is only ever shown when a video really is attached.
     final bool isVideoType = LessonTypeX.fromApiValue(type) == LessonType.video;
+    final bool isQuizType = LessonTypeX.fromApiValue(type) == LessonType.quiz;
     final bool videoMissing = isVideoType && hasVideo == false;
 
     return Wrap(
@@ -140,7 +155,9 @@ class LessonBadgeRow extends StatelessWidget {
           else
             LessonBadge(
               icon: ui.icon,
-              label: ui.label,
+              // "3 videos" rather than "Video": the count is the thing an
+              // admin is checking when a lesson holds more than one.
+              label: isVideoType && videoCount > 1 ? '$videoCount videos' : ui.label,
               // Grey until the API confirms a video exists - a blue play icon
               // on an empty lesson is what made the list misleading.
               color: isVideoType && hasVideo != true ? LmsColors.textGrey : ui.color,
@@ -192,8 +209,26 @@ class LessonBadgeRow extends StatelessWidget {
         if (hasVideo == true && !isVideoType)
           LessonBadge(
             icon: Icons.play_circle_outline_rounded,
-            label: 'Video',
+            label: videoCount > 1 ? '$videoCount videos' : 'Video',
             color: kVideoColor,
+            compact: compact,
+          ),
+
+        // A lesson that leads with video but also holds a quiz — invisible
+        // before, because the type chip was the only thing that said so.
+        if (hasQuiz && !isQuizType)
+          LessonBadge(
+            icon: Icons.quiz_outlined,
+            label: 'Quiz',
+            color: LessonTypeUI.of(LessonType.quiz).color,
+            compact: compact,
+          ),
+
+        if (deckCount > 0)
+          LessonBadge(
+            icon: Icons.style_outlined,
+            label: deckCount == 1 ? '1 deck' : '$deckCount decks',
+            color: LmsColors.primary,
             compact: compact,
           ),
 

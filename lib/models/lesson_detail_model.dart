@@ -86,6 +86,117 @@ Set<int> parseLessonPlanIds(Map<String, dynamic> json) {
 /// video (url + publicId), thumbnail (url + publicId), notes (url +
 /// publicId + fileType), quiz content, and access settings. Used for
 /// both the chapter's lesson list and the single-lesson detail screen.
+/// One video on a lesson. A lesson used to mean one video; it can now carry
+/// several, and `lesson.videoUrl` is still the first of them.
+class LessonVideo {
+  final int? id;
+  final String? title;
+  final String videoUrl;
+  final String? videoPublicId;
+  final String? thumbnailUrl;
+  final int? durationSeconds;
+  final int displayOrder;
+
+  const LessonVideo({
+    this.id,
+    this.title,
+    required this.videoUrl,
+    this.videoPublicId,
+    this.thumbnailUrl,
+    this.durationSeconds,
+    this.displayOrder = 0,
+  });
+
+  factory LessonVideo.fromJson(Map<String, dynamic> json) => LessonVideo(
+        id: (json['id'] as num?)?.toInt(),
+        title: (json['title'] as String?)?.trim().isNotEmpty == true
+            ? (json['title'] as String).trim()
+            : null,
+        videoUrl: '${json['videoUrl'] ?? ''}',
+        videoPublicId: json['videoPublicId'] as String?,
+        thumbnailUrl: json['thumbnailUrl'] as String?,
+        durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
+        displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
+      );
+
+  /// What the save sends. `displayOrder` is left out on purpose: the server
+  /// numbers the rows from the array's own order, so reordering the list is
+  /// the whole of reordering.
+  Map<String, dynamic> toJson() => {
+        'videoUrl': videoUrl,
+        if (title != null) 'title': title,
+        if (videoPublicId != null) 'videoPublicId': videoPublicId,
+        if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
+        if (durationSeconds != null) 'durationSeconds': durationSeconds,
+      };
+
+  /// "10:10", or null when the server never learned the length — a pasted
+  /// YouTube link has no duration until someone watches it.
+  String? get lengthLabel {
+    final total = durationSeconds;
+    if (total == null || total <= 0) return null;
+    final h = total ~/ 3600;
+    final m = (total % 3600) ~/ 60;
+    final sec = total % 60;
+    final mm = h > 0 ? '$m'.padLeft(2, '0') : '$m';
+    return h > 0
+        ? '$h:$mm:${'$sec'.padLeft(2, '0')}'
+        : '$mm:${'$sec'.padLeft(2, '0')}';
+  }
+}
+
+/// A Rapid Recall deck filed against a lesson. Read-only on the lesson form —
+/// decks are created and edited on the Rapid Recall screen, which has its own
+/// lesson picker.
+class LessonDeck {
+  final int id;
+  final String title;
+  final String status;
+
+  const LessonDeck({required this.id, required this.title, required this.status});
+
+  factory LessonDeck.fromJson(Map<String, dynamic> json) => LessonDeck(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        title: '${json['title'] ?? ''}',
+        status: '${json['status'] ?? 'draft'}',
+      );
+}
+
+/// Shared by [LessonDetail] and `Lesson`: the same two arrays arrive on both.
+///
+/// A response from before this feature has neither key. An empty list is then
+/// the honest answer for decks, but not for videos — the lesson may still have
+/// its single `videoUrl`, so that is promoted to a one-video list rather than
+/// reading as a lesson with no video at all.
+List<LessonVideo> parseLessonVideos(Map<String, dynamic> json) {
+  final raw = json['videos'];
+  if (raw is List) {
+    return raw
+        .whereType<Map>()
+        .map((v) => LessonVideo.fromJson(Map<String, dynamic>.from(v)))
+        .where((v) => v.videoUrl.isNotEmpty)
+        .toList();
+  }
+  final legacy = json['videoUrl'] as String?;
+  if (legacy == null || legacy.trim().isEmpty) return const [];
+  return [
+    LessonVideo(
+      videoUrl: legacy.trim(),
+      videoPublicId: json['videoPublicId'] as String?,
+      durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
+    ),
+  ];
+}
+
+List<LessonDeck> parseLessonDecks(Map<String, dynamic> json) {
+  final raw = json['rapidRecalls'];
+  if (raw is! List) return const [];
+  return raw
+      .whereType<Map>()
+      .map((d) => LessonDeck.fromJson(Map<String, dynamic>.from(d)))
+      .toList();
+}
+
 class LessonDetail {
   final int id;
   final int chapterId;
@@ -114,6 +225,12 @@ class LessonDetail {
   /// non-quiz lesson, and on a quiz lesson with nothing linked yet - so it
   /// carries the live pool counters without a second request.
   final Quiz? quiz;
+  /// Every video on this lesson, in order. [videoUrl] above is videos.first.
+  final List<LessonVideo> videos;
+
+  /// The Rapid Recall decks filed against this lesson.
+  final List<LessonDeck> rapidRecalls;
+
   final int displayOrder;
   final bool isFreePreview;
   final String accessType; // raw API value: 'free' | 'premium'
@@ -149,6 +266,8 @@ class LessonDetail {
     this.content,
     this.subjectId,
     this.quizId,
+    this.videos = const [],
+    this.rapidRecalls = const [],
     this.quiz,
     required this.displayOrder,
     required this.isFreePreview,
@@ -182,6 +301,8 @@ class LessonDetail {
       quiz: json['quiz'] is Map<String, dynamic>
           ? Quiz.fromJson(json['quiz'] as Map<String, dynamic>)
           : null,
+      videos: parseLessonVideos(json),
+      rapidRecalls: parseLessonDecks(json),
       displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
       isFreePreview: json['isFreePreview'] as bool? ?? false,
       accessType: json['accessType'] as String? ?? 'free',
@@ -197,7 +318,10 @@ class LessonDetail {
     );
   }
 
-  bool get hasVideo => videoUrl != null && videoUrl!.isNotEmpty;
+  bool get hasVideo => videos.isNotEmpty || (videoUrl != null && videoUrl!.isNotEmpty);
+  bool get hasQuiz => quizId != null;
+  int get videoCount => videos.length;
+  int get deckCount => rapidRecalls.length;
   bool get hasNote => noteUrl != null && noteUrl!.isNotEmpty;
   bool get hasThumbnail => thumbnailUrl != null && thumbnailUrl!.isNotEmpty;
 
