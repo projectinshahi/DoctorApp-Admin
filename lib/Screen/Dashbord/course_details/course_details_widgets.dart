@@ -56,7 +56,18 @@ class SectionTitle extends StatelessWidget {
   /// section but aren't "add another one of these".
   final Widget? action;
 
-  const SectionTitle(this.title, {required this.count, this.onAdd, this.action});
+  /// What the add button says. It used to read "Add Exam Type" whatever the
+  /// section was, which made the same action look like two different ones
+  /// depending on where an admin met it.
+  final String addLabel;
+
+  const SectionTitle(
+    this.title, {
+    required this.count,
+    this.onAdd,
+    this.action,
+    this.addLabel = 'Add',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -102,9 +113,10 @@ class SectionTitle extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
             icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text(
-              'Add Exam Type',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
+            label: Text(
+              addLabel,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w700, fontSize: 12.5),
             ),
           ),
       ],

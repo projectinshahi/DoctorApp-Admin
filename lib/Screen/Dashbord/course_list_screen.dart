@@ -361,10 +361,19 @@ class _CourseRowState extends State<_CourseRow> {
     );
   }
 
-  void _openCourse() {
+  /// [examTypeId] opens the course on one exam rather than all of them.
+  ///
+  /// A course holds six exams; an admin who clicked DHA wants DHA, not a page
+  /// where DHA is the fourth card down.
+  void _openCourse({int? examTypeId}) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => CourseDetailsScreen(courseId: course.id)),
+      MaterialPageRoute(
+        builder: (_) => CourseDetailsScreen(
+          courseId: course.id,
+          focusCourseTypeId: examTypeId,
+        ),
+      ),
     );
   }
 
@@ -618,7 +627,7 @@ class _CourseRowState extends State<_CourseRow> {
                 (examType) => _ExamTypeRow(
                   examType: examType,
                   statusColor: _statusColor(examType.status),
-                  onTap: _openCourse, // exam types have no screen of their own
+                  onTap: () => _openCourse(examTypeId: examType.id),
                 ),
               ),
           ],

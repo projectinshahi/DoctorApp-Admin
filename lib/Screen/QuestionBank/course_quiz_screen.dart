@@ -21,7 +21,16 @@ import 'quiz_questions_screen.dart';
 /// is matched against those lesson ids. Nothing here walks the tree a second
 /// time.
 class CourseQuizScreen extends StatefulWidget {
-  const CourseQuizScreen({super.key});
+  /// Opened from a course rather than from the sidebar: start on that course
+  /// and that exam instead of the first of each.
+  final int? initialCourseId;
+  final int? initialCourseTypeId;
+
+  const CourseQuizScreen({
+    super.key,
+    this.initialCourseId,
+    this.initialCourseTypeId,
+  });
 
   @override
   State<CourseQuizScreen> createState() => _CourseQuizScreenState();
@@ -51,13 +60,18 @@ class _CourseQuizScreenState extends State<CourseQuizScreen> {
       if (!mounted) return;
       final provider = context.read<CourseListGetProvider>();
       await provider.fetchCourses(limit: 100);
-      if (mounted && provider.courses.isNotEmpty && _courseId == null) {
-        await _selectCourse(provider.courses.first.id);
+      if (!mounted || _courseId != null) return;
+
+      final courseId = widget.initialCourseId ??
+          (provider.courses.isNotEmpty ? provider.courses.first.id : null);
+      if (courseId != null) {
+        await _selectCourse(courseId, preferType: widget.initialCourseTypeId);
       }
     });
   }
 
-  Future<void> _selectCourse(int courseId) async {
+  /// [preferType] is the exam to land on; without it, the first one.
+  Future<void> _selectCourse(int courseId, {int? preferType}) async {
     setState(() {
       _courseId = courseId;
       _courseTypeId = null;
@@ -75,7 +89,12 @@ class _CourseQuizScreenState extends State<CourseQuizScreen> {
         _isLoadingTypes = false;
         _types = response.courseTypes;
       });
-      if (_types.isNotEmpty) await _selectType(_types.first.id);
+      if (_types.isNotEmpty) {
+        final wanted = _types.any((t) => t.id == preferType)
+            ? preferType!
+            : _types.first.id;
+        await _selectType(wanted);
+      }
     } catch (e) {
       if (!mounted || _courseId != courseId) return;
       setState(() {

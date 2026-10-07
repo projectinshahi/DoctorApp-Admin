@@ -6,8 +6,6 @@ import 'package:provider/provider.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../provider/lesson_upload_provider.dart';
 import '../../services/lesson_services.dart';
-import '../../models/question_bank_model.dart';
-import '../../services/subject_topic_service.dart';
 import '../../services/lesson_upload_service.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../models/quiz_model.dart';
@@ -303,6 +301,86 @@ class _UploadBadge extends StatelessWidget {
       );
 }
 
+/// Free or premium, as one checkbox.
+///
+/// Ticked means every student can open it. Unticked means a subscription is
+/// needed - and which subscription is the plan's business: a plan that buys
+/// `video_lecture` opens premium videos, one that buys `mcq` opens premium
+/// quizzes, so the same lesson can be open to one paying student and closed to
+/// another without anything being set here.
+class _FreeSwitch extends StatelessWidget {
+  final bool isFree;
+  final LessonType type;
+
+  /// On a premium course a ticked box is a free preview, which is worth
+  /// saying: it is the one lesson students who have paid nothing will see.
+  final bool coursePremium;
+  final ValueChanged<bool> onChanged;
+
+  const _FreeSwitch({
+    required this.isFree,
+    required this.type,
+    required this.coursePremium,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final noun = type == LessonType.quiz ? 'quiz' : 'video';
+
+    return InkWell(
+      onTap: () => onChanged(!isFree),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: Checkbox(
+                value: isFree,
+                onChanged: (v) => onChanged(v ?? false),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                activeColor: LmsColors.primary,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                      coursePremium && isFree
+                          ? 'Free preview'
+                          : 'Free for everyone',
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(
+                    isFree
+                        ? coursePremium
+                            ? 'Open to everyone on a paid course - this $noun '
+                                'is what a student sees before subscribing.'
+                            : 'Any student can open this $noun, subscribed or '
+                                'not.'
+                        : 'Premium. A student needs a subscription whose plan '
+                            'includes ${type == LessonType.quiz ? 'quizzes' : 'video lectures'}.',
+                    style: const TextStyle(
+                        fontSize: 12, height: 1.35, color: LmsColors.textGrey),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _FieldLabel extends StatelessWidget {
   final String text;
   const _FieldLabel(this.text);
@@ -313,10 +391,32 @@ class _FieldLabel extends StatelessWidget {
   }
 }
 
+/// What `isFreePreview` has to be, given the course and the one tick.
+///
+/// | course  | ticked | accessType | isFreePreview |
+/// |---------|--------|------------|---------------|
+/// | free    | yes    | free       | false         |
+/// | free    | no     | premium    | false         |
+/// | premium | yes    | free       | **true**      |
+/// | premium | no     | premium    | false         |
+///
+/// A free course has nothing to preview. A premium one does: the tick is what
+/// lets a single lesson through to students who have paid nothing.
+///
+/// [coursePremium] null means the caller did not know, and then [current] - the
+/// flag the lesson already carries - is kept rather than guessed at.
+bool lessonFreePreview({
+  required bool? coursePremium,
+  required bool isFree,
+  required bool current,
+}) =>
+    coursePremium == null ? current : coursePremium && isFree;
+
 Future<bool?> showAddEditLessonSheet(
     BuildContext context, {
       required int chapterId,
       int? courseId, // NEW - needed to list the course's plans
+      bool? coursePremium,
       int? lessonId,
       String? initialTitle,
       String? initialDescription,
@@ -348,6 +448,7 @@ Future<bool?> showAddEditLessonSheet(
         child: _AddEditLessonSheet(
           chapterId: chapterId,
           courseId: courseId, // NEW
+          coursePremium: coursePremium,
           lessonId: lessonId,
           initialTitle: initialTitle,
           initialDescription: initialDescription,
@@ -376,7 +477,16 @@ Future<bool?> showAddEditLessonSheet(
 
 class _AddEditLessonSheet extends StatefulWidget {
   final int chapterId;
-  final int? courseId; // NEW
+  final int? courseId;
+
+  /// Whether the course this lesson sits in is premium.
+  ///
+  /// It decides what "free" means for a lesson: on a free course nothing is
+  /// gated, so the tick is just `accessType: free`; on a premium course the
+  /// same tick is a free preview, which is the flag the student app reads to
+  /// let a lesson through an otherwise paid course. Null means the caller did
+  /// not know, and then the lesson keeps whatever preview flag it already had.
+  final bool? coursePremium; // NEW
   final int? lessonId;
   final String? initialTitle;
   final String? initialDescription;
@@ -400,7 +510,8 @@ class _AddEditLessonSheet extends StatefulWidget {
 
   const _AddEditLessonSheet({
     required this.chapterId,
-    this.courseId, // NEW
+    this.courseId,
+    this.coursePremium, // NEW
     this.lessonId,
     this.initialTitle,
     this.initialDescription,
@@ -439,17 +550,19 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   /// what the lesson already had rather than quietly closing a free preview
   /// that students were relying on.
   late bool _isFreePreview;
-  /// No longer editable here - access is decided once, on the course. Kept so
-  /// a save resends what the lesson already had, along with [_planIds], rather
-  /// than silently resetting an existing premium lesson to free.
+  /// Free or premium, as one switch on the lesson itself.
+  ///
+  /// There is no plan picker beside it: the plan's entitlements decide which
+  /// premium lessons a subscription opens - `video_lecture` for a video, `mcq`
+  /// for a quiz - so naming plans here would be a second answer to a question
+  /// the plan already answers.
   late LessonAccessType _accessType;
   late LessonStatus _status; // NEW
 
-  /// Optional, and for filtering only - it does not change what a student
-  /// sees, and a quiz lesson without one falls back to its quiz's subject.
+  /// Not editable here any more. It tagged a lesson for one filter in the
+  /// Rapid Recall form and asked every admin about it on the way past. Kept so
+  /// a save resends what the lesson already had rather than untagging it.
   int? _subjectId;
-  List<Subject> _subjects = const [];
-  bool _loadingSubjects = false;
 
   // Premium plan picker - a lesson can require any number of plans; empty
   // means "any active subscription".
@@ -526,7 +639,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     _accessType = widget.initialAccessType ?? LessonAccessType.free;
     _status = widget.initialStatus ?? LessonStatus.draft; // NEW
     _subjectId = widget.initialSubjectId;
-    if (widget.courseId != null) _loadSubjects(widget.courseId!);
     _planIds = {...widget.initialPlanIds}; // NEW
 
     _videoUrl = widget.initialVideoUrl;
@@ -580,19 +692,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       _videoUrl = trimmed.isEmpty ? null : trimmed;
       _videoPublicId = null;
       _videoRemoved = trimmed.isEmpty && _isEditMode && _hadInitialVideo;
-    });
-  }
-
-  /// The same course-scoped list the Rapid Recall form uses, so the subject
-  /// tagged here is one that form can actually filter by.
-  Future<void> _loadSubjects(int courseId) async {
-    setState(() => _loadingSubjects = true);
-    final result =
-        await SubjectTopicService().getCourseSubjects(courseId: courseId);
-    if (!mounted) return;
-    setState(() {
-      _loadingSubjects = false;
-      _subjects = result.isSuccess ? result.subjects : const [];
     });
   }
 
@@ -788,6 +887,15 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
         _linkedQuizId = quizId;
       }
     }
+    // Free on a premium course is a free preview: same tick, and the server
+    // reads two fields. Sent on every save, true and false alike - omitting it
+    // on an edit would leave a lesson open after it was switched to premium.
+    final bool freePreview = lessonFreePreview(
+      coursePremium: widget.coursePremium,
+      isFree: _accessType == LessonAccessType.free,
+      current: _isFreePreview,
+    );
+
     final description = _descriptionController.text.trim();
 
     final bool removeDescription =
@@ -816,7 +924,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       notePublicId: _isQuiz ? null : _notePublicId,
       noteFileType: _isQuiz ? null : _noteFileType,
       removeNote: _isQuiz ? false : _noteRemoved,
-      isFreePreview: _isFreePreview,
+      isFreePreview: freePreview,
       accessType: _accessType,
       status: _status,
       planIds: _planIds.toList(),
@@ -839,7 +947,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       notePublicId: _isQuiz ? null : _notePublicId,
       noteFileType: _isQuiz ? null : _noteFileType,
       displayOrder: widget.initialDisplayOrder,
-      isFreePreview: _isFreePreview,
+      isFreePreview: freePreview,
       accessType: _accessType,
       status: _status,
       planIds: _planIds.toList(),
@@ -996,49 +1104,14 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 ),
                 const SizedBox(height: 18),
 
-                const _FieldLabel('Subject (optional)'),
-                const SizedBox(height: 2),
-                Text(
-                  _isQuiz && _subjectId == null
-                      // The filter falls back to the quiz's subject anyway, so
-                      // tagging a quiz lesson by hand is rarely worth it.
-                      ? 'Leave blank and this quiz lesson uses its quiz\'s '
-                          'subject.'
-                      : 'Only used to filter this lesson in the Rapid Recall '
-                          'form. Students see no difference.',
-                  style: const TextStyle(
-                      fontSize: 11.5, color: LmsColors.textGrey),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<int?>(
-                  initialValue:
-                      _subjects.any((s) => s.id == _subjectId) ? _subjectId : null,
-                  isExpanded: true,
-                  decoration: _inputDecoration(
-                    widget.courseId == null
-                        ? 'Open this lesson from its course to set a subject'
-                        : _loadingSubjects
-                            ? 'Loading subjects…'
-                            : _subjects.isEmpty
-                                ? 'No subjects on this course'
-                                : 'None',
-                    icon: Icons.category_outlined,
-                  ),
-                  items: [
-                    const DropdownMenuItem<int?>(
-                      value: null,
-                      child: Text('None',
-                          style: TextStyle(color: LmsColors.textGrey)),
-                    ),
-                    for (final subject in _subjects)
-                      DropdownMenuItem<int?>(
-                        value: subject.id,
-                        child: Text(subject.name),
-                      ),
-                  ],
-                  onChanged: _subjects.isEmpty
-                      ? null
-                      : (value) => setState(() => _subjectId = value),
+                // Reads as one decision about this lesson, not a pricing
+                // model: which plan opens it is the plan's business.
+                _FreeSwitch(
+                  isFree: _accessType == LessonAccessType.free,
+                  type: _type,
+                  coursePremium: widget.coursePremium ?? false,
+                  onChanged: (free) => setState(() => _accessType =
+                      free ? LessonAccessType.free : LessonAccessType.premium),
                 ),
 
                 if (_isQuiz) ...[

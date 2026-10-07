@@ -37,7 +37,11 @@ class _VideoLesson {
 /// hang off chapters, which hang off exam types. So the course tree is loaded
 /// once per course and walked for lessons carrying a videoUrl.
 class LessonVideoScreen extends StatefulWidget {
-  const LessonVideoScreen({super.key});
+  /// Opened from a course rather than from the sidebar: start on that course
+  /// instead of the first in the list.
+  final int? initialCourseId;
+
+  const LessonVideoScreen({super.key, this.initialCourseId});
 
   @override
   State<LessonVideoScreen> createState() => _LessonVideoScreenState();
@@ -58,9 +62,9 @@ class _LessonVideoScreenState extends State<LessonVideoScreen> {
       await provider.fetchCourses(limit: 100);
       // Every course is on screen now, so an empty pane behind a "pick one"
       // prompt is a step with nothing behind it.
-      if (mounted && provider.courses.isNotEmpty && _courseId == null) {
-        _selectCourse(provider.courses.first.id);
-      }
+      if (!mounted || _courseId != null) return;
+      _selectCourse(widget.initialCourseId ??
+          (provider.courses.isNotEmpty ? provider.courses.first.id : null));
     });
   }
 

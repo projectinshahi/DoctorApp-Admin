@@ -13,6 +13,8 @@ import '../../services/admin_plan_services.dart';
 import '../../services/lesson_detail_service.dart' as detail;
 import '../../services/lesson_services.dart';
 import '../../widget/breadcrumb_widget.dart';
+import '../QuestionBank/course_quiz_screen.dart';
+import 'lesson_video_screen.dart';
 import 'edit_course_type_sheet.dart';
 import 'add_edit_chapter_sheet.dart';
 import 'add_edit_lesson_sheet.dart';
@@ -29,10 +31,19 @@ class CourseDetailsScreen extends StatefulWidget {
   /// not managed. Every add / edit / delete affordance leaves the tree.
   final bool readOnly;
 
+  /// Show one exam rather than all of them.
+  ///
+  /// Set when an admin opened the course by clicking an exam: a course with
+  /// six exams otherwise answers "DHA" with a page where DHA is the fourth
+  /// card down. An id this course does not hold is ignored, so a stale link
+  /// still lands on something.
+  final int? focusCourseTypeId;
+
   const CourseDetailsScreen({
     Key? key,
     required this.courseId,
     this.readOnly = false,
+    this.focusCourseTypeId,
   }) : super(key: key);
 
   @override
@@ -235,11 +246,20 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
 
   // ── Lesson handlers ──────────────────────────────────────────────────
 
+  /// Null while the course is still loading - the sheet then leaves a
+  /// lesson's free-preview flag as it found it rather than guessing.
+  bool? get _coursePremium {
+    final access =
+        context.read<CourseDetailsProvider>().courseDetails?.accessType;
+    return access == null || access.isEmpty ? null : access == 'premium';
+  }
+
   Future<void> _openAddLessonSheet(Chapter chapter) async {
     final created = await showAddEditLessonSheet(
       context,
       chapterId: chapter.id,
       courseId: widget.courseId, // NEW
+      coursePremium: _coursePremium,
       initialDisplayOrder: chapter.lessons.length,
     );
     if (created == true) {
@@ -260,6 +280,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       context,
       chapterId: chapter.id,
       courseId: widget.courseId,
+      coursePremium: _coursePremium,
       lessonId: full.id,
       initialTitle: full.title,
       initialDescription: full.description,
@@ -360,6 +381,27 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
     }
   }
 
+  void _openQuestionBank(CourseType courseType) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CourseQuizScreen(
+          initialCourseId: widget.courseId,
+          initialCourseTypeId: courseType.id,
+        ),
+      ),
+    );
+  }
+
+  void _openVideos() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LessonVideoScreen(initialCourseId: widget.courseId),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -394,6 +436,17 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
             return const ErrorState(message: 'No course found.');
           }
 
+          // An exam that is not in this course - deleted, or a link from
+          // elsewhere - falls back to the whole course rather than an empty
+          // page about nothing.
+          final focused = widget.focusCourseTypeId == null
+              ? null
+              : course.courseTypes
+                  .where((t) => t.id == widget.focusCourseTypeId)
+                  .firstOrNull;
+          final examTypes =
+              focused == null ? course.courseTypes : [focused];
+
           return CustomScrollView(
             slivers: [
               PremiumHeader(course: course),
@@ -403,22 +456,55 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      LmsBreadcrumb(path: ['Courses', course.title]),
+                      LmsBreadcrumb(path: [
+                        'Courses',
+                        course.title,
+                        if (focused != null) focused.title,
+                      ]),
                       const SizedBox(height: 12),
                       StatChipsRow(course: course, statusColor: _statusColor),
                       const SizedBox(height: 28),
 
                       SectionTitle(
-                        'Exam Types',
-                        count: course.courseTypes.length,
-                        onAdd: widget.readOnly ? null : _openAddSheet,
+                        focused?.title ?? 'Exam Types',
+                        count: examTypes.length,
+                        // The same word the course list's button uses: one
+                        // action, met in two places, reading the same way.
+                        addLabel: 'Exam',
+                        // Adding an exam belongs to the course, not to the one
+                        // exam being looked at.
+                        onAdd: widget.readOnly || focused != null
+                            ? null
+                            : _openAddSheet,
                       ),
+
+                      // The two places an exam's content is managed from that
+                      // are not in the tree below: its videos and its quizzes.
+                      if (focused != null) ...[
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: _openVideos,
+                              icon: const Icon(Icons.videocam_outlined, size: 17),
+                              label: const Text('Videos'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () => _openQuestionBank(focused),
+                              icon: const Icon(Icons.quiz_outlined, size: 17),
+                              label: const Text('Question bank'),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 12),
 
-                      if (course.courseTypes.isEmpty)
+                      if (examTypes.isEmpty)
                         const EmptyRow(text: 'No exam types added yet.')
                       else
-                        ...course.courseTypes.map(
+                        ...examTypes.map(
                               (courseType) => CourseTypeCard(
                                 onRefresh: _refresh,
                             courseType: courseType,
