@@ -82,9 +82,9 @@ class LessonBadge extends StatelessWidget {
 /// whether a video is attached, and the free-preview flag.
 ///
 /// [planLabels] is resolved by the caller from the course's plan list - one
-/// entry per plan that unlocks the lesson. Empty on a premium lesson reads
-/// "Any subscription". [maxPlanBadges] keeps a dense list row from wrapping
-/// into a wall of pills; the overflow collapses into a "+N" badge.
+/// entry per plan that unlocks the lesson, and nothing at all when there are
+/// none. [maxPlanBadges] keeps a dense list row from wrapping into a wall of
+/// pills; the overflow collapses into a "+N" badge.
 class LessonBadgeRow extends StatelessWidget {
   final String type;
   final String status;
@@ -178,32 +178,26 @@ class LessonBadgeRow extends StatelessWidget {
           compact: compact,
         ),
 
-        // Which plans unlock it - only meaningful for premium lessons.
-        if (isPremium)
-          if (planLabels.isEmpty)
+        // Named plans only. "Any subscription" is gone: every premium lesson
+        // said it, which made the row longer without telling anyone anything
+        // the Premium badge beside it had not already said.
+        if (isPremium && planLabels.isNotEmpty) ...[
+          ...planLabels.take(maxPlanBadges).map(
+                (label) => LessonBadge(
+                  icon: Icons.card_membership_rounded,
+                  label: label,
+                  color: kPremiumColor,
+                  compact: compact,
+                ),
+              ),
+          if (planLabels.length > maxPlanBadges)
             LessonBadge(
-              icon: Icons.card_membership_rounded,
-              label: 'Any subscription',
+              icon: Icons.more_horiz_rounded,
+              label: '+${planLabels.length - maxPlanBadges}',
               color: kPremiumColor,
               compact: compact,
-            )
-          else ...[
-            ...planLabels.take(maxPlanBadges).map(
-                  (label) => LessonBadge(
-                    icon: Icons.card_membership_rounded,
-                    label: label,
-                    color: kPremiumColor,
-                    compact: compact,
-                  ),
-                ),
-            if (planLabels.length > maxPlanBadges)
-              LessonBadge(
-                icon: Icons.more_horiz_rounded,
-                label: '+${planLabels.length - maxPlanBadges}',
-                color: kPremiumColor,
-                compact: compact,
-              ),
-          ],
+            ),
+        ],
 
         // A non-video lesson that still carries a video is worth flagging.
         if (hasVideo == true && !isVideoType)

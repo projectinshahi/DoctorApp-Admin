@@ -11,14 +11,12 @@ import '../../provider/chapter_provider.dart';
 import '../../provider/lesson_upload_provider.dart';
 import '../../services/admin_plan_services.dart';
 import '../../services/lesson_detail_service.dart' as detail;
-import '../../services/lesson_services.dart';
 import '../../widget/breadcrumb_widget.dart';
 import '../QuestionBank/course_quiz_screen.dart';
 import 'lesson_video_screen.dart';
 import 'edit_course_type_sheet.dart';
 import 'add_edit_chapter_sheet.dart';
 import 'add_edit_lesson_sheet.dart';
-import 'lesson_subscription_sheet.dart';
 import 'course_details/course_details_widgets.dart';
 import 'course_details/fallback_course_view.dart';
 import 'course_details/full_course_view.dart';
@@ -332,26 +330,6 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
     return null;
   }
 
-  /// Access + plans straight from the list row - the same sheet the lesson
-  /// detail screen opens, so there's one place these rules live.
-  Future<void> _openLessonSubscriptionSheet(Chapter chapter, Lesson lesson) async {
-    final saved = await showLessonSubscriptionSheet(
-      context,
-      courseId: widget.courseId,
-      chapterId: chapter.id,
-      lessonId: lesson.id,
-      lessonTitle: lesson.title,
-      accessType: LessonAccessTypeX.fromApiValue(lesson.accessType),
-      planIds: lesson.planIds,
-      isFreePreview: lesson.isFreePreview,
-      attachedPlans: lesson.plans,
-    );
-    if (saved != true || !mounted) return;
-    _showSnack('Subscription updated');
-    await _loadPlanTitles();
-    await _refresh();
-  }
-
   Future<void> _confirmDeleteLesson(Chapter chapter, Lesson lesson) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -522,8 +500,6 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                             onAddLesson: (chapter) => _openAddLessonSheet(chapter),
                             onEditLesson: (chapter, lesson) => _openEditLessonSheet(chapter, lesson),
                             onDeleteLesson: (chapter, lesson) => _confirmDeleteLesson(chapter, lesson),
-                            onEditLessonSubscription: (chapter, lesson) =>
-                                _openLessonSubscriptionSheet(chapter, lesson),
                           ),
                         ),
 
@@ -558,10 +534,6 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                                 onDeleteLesson: widget.readOnly
                                     ? null
                                     : (lesson) => _confirmDeleteLesson(c, lesson),
-                                onEditLessonSubscription: widget.readOnly
-                                    ? null
-                                    : (lesson) =>
-                                        _openLessonSubscriptionSheet(c, lesson),
                               ),
                             );
                           }),

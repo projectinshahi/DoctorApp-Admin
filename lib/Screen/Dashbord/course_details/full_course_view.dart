@@ -178,7 +178,6 @@ class CourseTypeCard extends StatelessWidget {
   final void Function(Chapter chapter) onAddLesson;
   final void Function(Chapter chapter, Lesson lesson) onEditLesson;
   final void Function(Chapter chapter, Lesson lesson) onDeleteLesson;
-  final void Function(Chapter chapter, Lesson lesson)? onEditLessonSubscription;
 
   /// Listing and reading only - every add / edit / delete affordance comes out
   /// of the tree rather than being disabled, so there is nothing to click that
@@ -202,7 +201,6 @@ class CourseTypeCard extends StatelessWidget {
     required this.onAddLesson,
     required this.onEditLesson,
     required this.onDeleteLesson,
-    this.onEditLessonSubscription,
     this.readOnly = false,
     this.onRefresh,
   });
@@ -359,10 +357,6 @@ class CourseTypeCard extends StatelessWidget {
                 onDeleteLesson: readOnly
                     ? null
                     : (lesson) => onDeleteLesson(chapter, lesson),
-                onEditLessonSubscription:
-                    readOnly || onEditLessonSubscription == null
-                    ? null
-                    : (lesson) => onEditLessonSubscription!(chapter, lesson),
                 // Refreshes the course so the chapter counts and the student
                 // outline agree with what was just saved.
                 onReordered: readOnly ? null : onRefresh,
@@ -407,7 +401,6 @@ class ChapterTile extends StatefulWidget {
   final VoidCallback? onAddLesson;
   final void Function(Lesson lesson)? onEditLesson;
   final void Function(Lesson lesson)? onDeleteLesson;
-  final void Function(Lesson lesson)? onEditLessonSubscription;
 
   /// Called after a successful reorder so the parent can refresh.
   ///
@@ -426,7 +419,6 @@ class ChapterTile extends StatefulWidget {
     this.onAddLesson,
     this.onEditLesson,
     this.onDeleteLesson,
-    this.onEditLessonSubscription,
     this.onReordered,
   });
 
@@ -687,10 +679,6 @@ class _ChapterTileState extends State<ChapterTile> {
                       onDelete: widget.onDeleteLesson == null
                           ? null
                           : () => widget.onDeleteLesson!(lesson),
-                      onEditSubscription:
-                          widget.onEditLessonSubscription == null
-                              ? null
-                              : () => widget.onEditLessonSubscription!(lesson),
                     ),
                   );
                 },
@@ -737,7 +725,6 @@ class _LessonTimelineRow extends StatelessWidget {
 
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
-  final VoidCallback? onEditSubscription;
 
   const _LessonTimelineRow({
     required this.lesson,
@@ -748,7 +735,6 @@ class _LessonTimelineRow extends StatelessWidget {
     this.draggable = false,
     this.onEdit,
     this.onDelete,
-    this.onEditSubscription,
   });
 
   /// Where the node sits from the top of the row - lines up with the middle of
@@ -836,19 +822,6 @@ class _LessonTimelineRow extends StatelessWidget {
                               ),
                             ),
                           ),
-                          if (onEditSubscription != null)
-                            IconButton(
-                              icon: Icon(
-                                Icons.card_membership_rounded,
-                                size: 15,
-                                color: lesson.accessType == 'premium'
-                                    ? kPremiumColor
-                                    : LmsColors.textGrey,
-                              ),
-                              tooltip: 'Edit subscription',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: onEditSubscription,
-                            ),
                           if (showActions) ...[
                             IconButton(
                               icon: const Icon(
