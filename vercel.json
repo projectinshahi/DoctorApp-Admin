@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "git clone https://github.com/flutter/flutter.git -b stable --depth 1 $HOME/flutter && $HOME/flutter/bin/flutter precache --web",
-  "buildCommand": "$HOME/flutter/bin/flutter build web --release",
+  "buildCommand": "$HOME/flutter/bin/flutter build web --release --dart-define=API_ROOT=${API_ROOT:-https://doctorapp-backend-cl2h.onrender.com}",
   "outputDirectory": "build/web",
   "framework": null,
   "rewrites": [

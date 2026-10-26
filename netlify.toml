@@ -1,0 +1,21 @@
+# Netlify has no Flutter, so the SDK is cloned in the build step.
+[build]
+  publish = "build/web"
+  command = "git clone https://github.com/flutter/flutter.git -b stable --depth 1 $HOME/flutter && $HOME/flutter/bin/flutter precache --web && $HOME/flutter/bin/flutter build web --release --dart-define=API_ROOT=${API_ROOT:-https://doctorapp-backend-cl2h.onrender.com}"
+
+# Every path is the one page. Without this, refreshing anywhere but / is a
+# 404: Netlify looks for a file that a single-page app never wrote.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"

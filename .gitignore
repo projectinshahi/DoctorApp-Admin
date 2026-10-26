@@ -46,3 +46,6 @@ app.*.map.json
 
 # Gradle output from `flutter build apk` - regenerated on every build.
 /android/build/
+
+# Build-time config. .env.example is the one that is committed.
+/.env
