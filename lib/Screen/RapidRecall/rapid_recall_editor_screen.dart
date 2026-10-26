@@ -45,6 +45,10 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
   /// Disabling it instead made the control look broken.
   bool _wantPublished = false;
 
+  /// Free for every student, or premium behind the Rapid Recall plan. Sent
+  /// with the deck on Save.
+  bool _free = false;
+
   bool _isLoading = false;
   bool _isSaving = false;
   String? _error;
@@ -91,6 +95,7 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
           ? const [RapidRecallCard()]
           : recall.cards;
       _wantPublished = recall.isPublished;
+      _free = recall.isFree;
       _scope = RecallScope(
         courseId: recall.courseId,
         courseTypeId: recall.courseTypeId,
@@ -141,6 +146,7 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
       courseTypeId: _scope.courseTypeId,
       chapterId: _scope.chapterId,
       lessonId: _scope.lessonId,
+      accessType: _free ? 'free' : 'premium',
       // The deck no longer carries its own file; each note holds its own.
       noteUrl: _recall?.noteUrl,
       notePublicId: _recall?.notePublicId,
@@ -373,6 +379,12 @@ class _RapidRecallEditorScreenState extends State<RapidRecallEditorScreen> {
                           enabled: !_isSaving,
                           onChanged: _setPublished,
                         ),
+                        const SizedBox(height: 12),
+                        _AccessRow(
+                          free: _free,
+                          enabled: !_isSaving,
+                          onChanged: (free) => setState(() => _free = free),
+                        ),
                         const SizedBox(height: 22),
 
                         const _Label('Revision notes'),
@@ -483,6 +495,76 @@ class _StatusRow extends StatelessWidget {
           ),
           Switch(
             value: live,
+            onChanged: enabled ? onChanged : null,
+            activeThumbColor: Colors.white,
+            activeTrackColor: LmsColors.success,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Free or premium, as one switch. Takes effect on Save, with the deck.
+class _AccessRow extends StatelessWidget {
+  final bool free;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  const _AccessRow({
+    required this.free,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = free ? LmsColors.success : LmsColors.primary;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(15, 13, 11, 13),
+      decoration: BoxDecoration(
+        color: enabled ? accent.withValues(alpha: 0.06) : LmsColors.bg,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: enabled ? accent.withValues(alpha: 0.3) : LmsColors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            free ? Icons.lock_open_rounded : Icons.workspace_premium_rounded,
+            size: 20,
+            color: enabled ? accent : LmsColors.textGrey,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  free ? 'Free' : 'Premium',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: enabled ? accent : LmsColors.textGrey,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  free
+                      ? 'Every student can open this deck, with or without a '
+                          'plan.'
+                      : 'Listed for everyone, opened only with a plan that '
+                          'includes Rapid Recall.',
+                  style: const TextStyle(
+                      fontSize: 12, color: LmsColors.textGrey),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: free,
             onChanged: enabled ? onChanged : null,
             activeThumbColor: Colors.white,
             activeTrackColor: LmsColors.success,

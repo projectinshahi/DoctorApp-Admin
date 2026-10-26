@@ -116,6 +116,10 @@ class RapidRecall {
   /// until someone publishes it.
   final String status;
 
+  /// `free` | `premium`. Free opens for every student; premium needs a plan
+  /// with Rapid Recall. Decks made before this existed are premium.
+  final String accessType;
+
   final int cardCount;
 
   /// Only [courseId] is ever required. The other three each narrow the deck
@@ -146,6 +150,7 @@ class RapidRecall {
     required this.courseId,
     this.description,
     this.status = 'draft',
+    this.accessType = 'premium',
     this.cardCount = 0,
     this.courseTypeId,
     this.chapterId,
@@ -161,6 +166,8 @@ class RapidRecall {
   });
 
   bool get isPublished => status.toLowerCase() == 'published';
+
+  bool get isFree => accessType == 'free';
 
   bool get hasHandout => (noteUrl ?? '').trim().isNotEmpty;
 
@@ -182,6 +189,7 @@ class RapidRecall {
       title: '${json['title'] ?? ''}',
       description: _clean(json['description']),
       status: '${json['status'] ?? 'draft'}',
+      accessType: '${json['accessType'] ?? 'premium'}',
       cardCount: (json['cardCount'] as num?)?.toInt() ??
           (cards is List ? cards.length : 0),
       courseId: (json['courseId'] as num?)?.toInt() ??
@@ -219,6 +227,7 @@ class RapidRecall {
         'lessonId': lessonId,
         'title': title.trim(),
         'description': description?.trim(),
+        'accessType': accessType,
         'noteUrl': noteUrl,
         'notePublicId': notePublicId,
         'noteFileType': noteFileType,
