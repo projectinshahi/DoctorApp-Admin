@@ -40,11 +40,24 @@ class RecallNoteList extends StatefulWidget {
 class _RecallNoteListState extends State<RecallNoteList> {
   final _imageService = QuestionImageService();
 
-  /// A title and a description controller per row, keyed by identity rather
-  /// than index so a reorder moves the text with its card instead of leaving
-  /// it behind.
-  final _fields =
-      <RapidRecallCard, ({TextEditingController title, TextEditingController body})>{};
+  /// A title controller, a description controller and a row key per note,
+  /// keyed by identity rather than index so a reorder moves them with their
+  /// card instead of leaving them behind.
+  ///
+  /// The key has to live here with them. Editing a note replaces the card
+  /// object - every keystroke does - and a key derived from the card would
+  /// change with it, which makes Flutter discard the row and build a new one.
+  /// The field being typed into is rebuilt from scratch, losing focus and the
+  /// caret: one letter per tap.
+  final _fields = <RapidRecallCard,
+      ({
+        TextEditingController title,
+        TextEditingController body,
+        ValueKey<int> key
+      })>{};
+
+  /// Hands out row keys that no edit can change.
+  int _nextKey = 0;
 
   int? _uploadingAt;
 
@@ -57,13 +70,16 @@ class _RecallNoteListState extends State<RecallNoteList> {
     super.dispose();
   }
 
-  ({TextEditingController title, TextEditingController body}) _fieldsFor(
-          RapidRecallCard card) =>
-      _fields.putIfAbsent(
+  ({
+    TextEditingController title,
+    TextEditingController body,
+    ValueKey<int> key
+  }) _fieldsFor(RapidRecallCard card) => _fields.putIfAbsent(
         card,
         () => (
           title: TextEditingController(text: card.noteTitle),
           body: TextEditingController(text: card.noteBody),
+          key: ValueKey(_nextKey++),
         ),
       );
 
@@ -95,7 +111,11 @@ class _RecallNoteListState extends State<RecallNoteList> {
   /// one they just made should not be waiting for them at the bottom of a long
   /// scroll. Drag still reorders, so a deliberate order is one drag away.
   void _add() {
-    widget.onChanged([const RapidRecallCard(), ...widget.cards]);
+    // Not `const`: a const RapidRecallCard() is canonicalised, so two empty
+    // notes would be the SAME object - and [_fields] is keyed by identity, so
+    // they would share one pair of controllers. Typing in one note then
+    // appeared in the other.
+    widget.onChanged([RapidRecallCard(), ...widget.cards]);
   }
 
   void _remove(int index) {
@@ -197,7 +217,7 @@ class _RecallNoteListState extends State<RecallNoteList> {
             itemBuilder: (context, index) {
               final card = widget.cards[index];
               return Padding(
-                key: ValueKey(identityHashCode(card)),
+                key: _fieldsFor(card).key,
                 padding: const EdgeInsets.only(bottom: 10),
                 child: _NoteRow(
                   index: index,
@@ -315,7 +335,10 @@ class _NoteRow extends StatelessWidget {
                     hint: 'Type the answer here. Leave blank if the image '
                         'says it all.',
                     minLines: 4,
-                    maxLines: 8,
+                    // Grows with what is typed. A fixed window scrolls inside
+                    // itself, which fights the page's own scroll and hides
+                    // the line being written.
+                    maxLines: null,
                   ),
                 ],
               );
@@ -360,7 +383,9 @@ class _LabelledField extends StatelessWidget {
   final VoidCallback onChanged;
   final String hint;
   final int minLines;
-  final int maxLines;
+
+  /// Null lets the box grow instead of scrolling inside a fixed height.
+  final int? maxLines;
 
   const _LabelledField({
     required this.label,
@@ -369,7 +394,7 @@ class _LabelledField extends StatelessWidget {
     required this.onChanged,
     required this.hint,
     required this.minLines,
-    required this.maxLines,
+    this.maxLines,
   });
 
   @override
@@ -389,6 +414,8 @@ class _LabelledField extends StatelessWidget {
           enabled: enabled,
           minLines: minLines,
           maxLines: maxLines,
+          keyboardType: TextInputType.multiline,
+          textCapitalization: TextCapitalization.sentences,
           onChanged: (_) => onChanged(),
           style: const TextStyle(fontSize: 13, height: 1.4),
           decoration: InputDecoration(
@@ -405,6 +432,12 @@ class _LabelledField extends StatelessWidget {
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(11),
               borderSide: const BorderSide(color: LmsColors.border),
+            ),
+            // Which box has the caret, said in the panel's own colour rather
+            // than whatever the theme's default focus happens to be.
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(11),
+              borderSide: const BorderSide(color: LmsColors.primary, width: 1.4),
             ),
           ),
         ),
