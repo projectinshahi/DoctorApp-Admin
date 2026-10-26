@@ -1271,10 +1271,10 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                       free ? LessonAccessType.free : LessonAccessType.premium),
                 ),
 
-                // Shown whatever the lesson leads with: a video lesson can
-                // carry a quiz, and hiding the picker was the only reason it
-                // could not.
-                ...[
+                // Only on a quiz lesson. A video lesson is a video and its
+                // cover - the picker in the middle of that form was a question
+                // nobody adding a class wanted to answer.
+                if (_isQuiz) ...[
                   const SizedBox(height: 18),
                   _FieldLabel(_isQuiz ? 'Quiz' : 'Quiz (optional)'),
                   const SizedBox(height: 2),
@@ -1338,10 +1338,10 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   const SizedBox(height: 16),
                 ],
 
-                // Media is shown on every lesson type now: a lesson holds
-                // its videos, its quiz and its decks together rather than
-                // being one of them.
-                ...[
+                // Not on a quiz lesson. What a quiz serves is its questions;
+                // a cover image and a video link in the same form are two
+                // more fields to scroll past and leave empty.
+                if (!_isQuiz) ...[
                 // The chips above end flush; without this the next label sat
                 // right against them.
                 const SizedBox(height: 18),
