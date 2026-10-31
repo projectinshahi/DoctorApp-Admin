@@ -709,16 +709,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
       ));
     }
 
-    // One video per lesson. The payload is still a list because that is what
-    // the API takes, but the sheet only ever offers the first row.
-    if (_videos.length > 1) {
-      for (final extra in _videos.sublist(1)) {
-        extra.dispose();
-      }
-      _videos.removeRange(1, _videos.length);
-    }
-    if (_videos.isEmpty) _videos.add(_VideoDraft());
-
     _thumbnailUrl = widget.initialThumbnailUrl;
     _thumbnailPublicId = widget.initialThumbnailPublicId;
 
@@ -762,17 +752,23 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     await delete(publicId: publicId);
   }
 
-  /// Clears the one video rather than removing the row, so there is always a
-  /// field on screen. A lesson left without one is a quiz-only lesson.
+  void _addVideo() => setState(() => _videos.add(_VideoDraft()));
+
   void _removeVideo(int index) {
-    setState(() {
-      _videos[index].dispose();
-      _videos[index] = _VideoDraft();
-    });
+    setState(() => _videos.removeAt(index).dispose());
   }
 
-  /// The video, if one was typed. A blank row is dropped, which is how a
-  /// lesson ends up with no video at all.
+  /// Up and down rather than drag: the sheet is already a scroll view, and a
+  /// reorderable list inside one is a fight over the same gesture.
+  void _moveVideo(int index, int delta) {
+    final target = index + delta;
+    if (target < 0 || target >= _videos.length) return;
+    setState(() => _videos.insert(target, _videos.removeAt(index)));
+  }
+
+  /// Every row that has a link, in order. Rows left completely blank are
+  /// dropped — an admin who hit "Add video" and changed their mind has not
+  /// made a mistake worth blocking the save for.
   List<Map<String, dynamic>> get _videoPayload =>
       [for (final v in _videos) v.toJson()].whereType<Map<String, dynamic>>().toList();
 
@@ -1063,9 +1059,9 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
         children: [
           Row(
             children: [
-              const Text(
-                'Video',
-                style: TextStyle(
+              Text(
+                'Video ${index + 1}',
+                style: const TextStyle(
                     fontSize: 12, fontWeight: FontWeight.w700,
                     color: LmsColors.textGrey),
               ),
@@ -1082,9 +1078,23 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
               ],
               const Spacer(),
               IconButton(
+                icon: const Icon(Icons.arrow_upward_rounded, size: 16),
+                tooltip: 'Move up',
+                visualDensity: VisualDensity.compact,
+                onPressed: index == 0 ? null : () => _moveVideo(index, -1),
+              ),
+              IconButton(
+                icon: const Icon(Icons.arrow_downward_rounded, size: 16),
+                tooltip: 'Move down',
+                visualDensity: VisualDensity.compact,
+                onPressed: index == _videos.length - 1
+                    ? null
+                    : () => _moveVideo(index, 1),
+              ),
+              IconButton(
                 icon: const Icon(Icons.delete_outline_rounded,
                     size: 16, color: LmsColors.error),
-                tooltip: 'Clear video',
+                tooltip: 'Remove video',
                 visualDensity: VisualDensity.compact,
                 onPressed: () => _removeVideo(index),
               ),
@@ -1386,13 +1396,48 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 // A lesson whose video was uploaded before keeps it: the row
                 // opens filled with that video's address and resends its
                 // publicId.
-                const _FieldLabel('Video (optional)'),
+                Row(
+                  children: [
+                    const Expanded(child: _FieldLabel('Videos (optional)')),
+                    TextButton.icon(
+                      onPressed: _addVideo,
+                      icon: const Icon(Icons.add_rounded, size: 17),
+                      label: const Text('Add video',
+                          style: TextStyle(
+                              fontSize: 12.5, fontWeight: FontWeight.w700)),
+                      style: TextButton.styleFrom(
+                          foregroundColor: LmsColors.primary),
+                    ),
+                  ],
+                ),
                 const Text(
-                  'Paste a YouTube link or a direct link to the video file.',
+                  'Paste a YouTube link or a direct link to the video file. '
+                  'Add as many as the lesson needs — the order here is the '
+                  'order students get.',
                   style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
                 ),
                 const SizedBox(height: 8),
-                _videoRow(0),
+                if (_videos.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: LmsColors.bg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: LmsColors.border),
+                    ),
+                    child: const Text(
+                      'No videos yet. A lesson can be quiz-only.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12.5, color: LmsColors.textGrey),
+                    ),
+                  )
+                else
+                  for (int i = 0; i < _videos.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _videoRow(i),
+                    ),
                 // No notes upload here any more. A lesson that already has a
                 // note keeps it: _noteUrl is resent unchanged on save.
                 const SizedBox(height: 16),
