@@ -17,6 +17,7 @@ import 'lesson_video_screen.dart';
 import 'edit_course_type_sheet.dart';
 import 'add_edit_chapter_sheet.dart';
 import 'add_edit_lesson_sheet.dart';
+import 'lesson_videos_sheet.dart';
 import 'course_details/course_details_widgets.dart';
 import 'course_details/fallback_course_view.dart';
 import 'course_details/full_course_view.dart';
@@ -243,6 +244,27 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
   }
 
   // ── Lesson handlers ──────────────────────────────────────────────────
+
+  /// Videos straight from the row, without the lesson form.
+  ///
+  /// The full lesson is fetched first because the list carries a count, not
+  /// the videos - and the save replaces the whole list, so sending what the
+  /// row knows would delete every video it does not.
+  Future<void> _openLessonVideosSheet(Chapter chapter, Lesson lesson) async {
+    final full = await _fetchFullLesson(lesson.id);
+    if (full == null || !mounted) return;
+
+    final saved = await showLessonVideosSheet(
+      context,
+      chapterId: chapter.id,
+      lessonId: full.id,
+      lessonTitle: full.title,
+      initialVideos: full.videos,
+    );
+    if (saved != true || !mounted) return;
+    _showSnack('Videos saved');
+    await _refresh();
+  }
 
   /// Null while the course is still loading - the sheet then leaves a
   /// lesson's free-preview flag as it found it rather than guessing.
@@ -499,6 +521,8 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                             onDeleteChapter: (chapter) => _confirmDeleteChapter(courseType, chapter),
                             onAddLesson: (chapter) => _openAddLessonSheet(chapter),
                             onEditLesson: (chapter, lesson) => _openEditLessonSheet(chapter, lesson),
+                            onAddLessonVideos: (chapter, lesson) =>
+                                _openLessonVideosSheet(chapter, lesson),
                             onDeleteLesson: (chapter, lesson) => _confirmDeleteLesson(chapter, lesson),
                           ),
                         ),
@@ -531,6 +555,10 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                                 onEditLesson: widget.readOnly
                                     ? null
                                     : (lesson) => _openEditLessonSheet(c, lesson),
+                                onAddLessonVideos: widget.readOnly
+                                    ? null
+                                    : (lesson) =>
+                                        _openLessonVideosSheet(c, lesson),
                                 onDeleteLesson: widget.readOnly
                                     ? null
                                     : (lesson) => _confirmDeleteLesson(c, lesson),

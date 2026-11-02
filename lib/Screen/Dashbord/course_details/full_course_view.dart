@@ -179,6 +179,10 @@ class CourseTypeCard extends StatelessWidget {
   final void Function(Chapter chapter, Lesson lesson) onEditLesson;
   final void Function(Chapter chapter, Lesson lesson) onDeleteLesson;
 
+  /// Videos, straight from the row - what Add Lesson is to a chapter, one
+  /// level down.
+  final void Function(Chapter chapter, Lesson lesson)? onAddLessonVideos;
+
   /// Listing and reading only - every add / edit / delete affordance comes out
   /// of the tree rather than being disabled, so there is nothing to click that
   /// then refuses.
@@ -201,6 +205,7 @@ class CourseTypeCard extends StatelessWidget {
     required this.onAddLesson,
     required this.onEditLesson,
     required this.onDeleteLesson,
+    this.onAddLessonVideos,
     this.readOnly = false,
     this.onRefresh,
   });
@@ -357,6 +362,9 @@ class CourseTypeCard extends StatelessWidget {
                 onDeleteLesson: readOnly
                     ? null
                     : (lesson) => onDeleteLesson(chapter, lesson),
+                onAddLessonVideos: readOnly || onAddLessonVideos == null
+                    ? null
+                    : (lesson) => onAddLessonVideos!(chapter, lesson),
                 // Refreshes the course so the chapter counts and the student
                 // outline agree with what was just saved.
                 onReordered: readOnly ? null : onRefresh,
@@ -401,6 +409,7 @@ class ChapterTile extends StatefulWidget {
   final VoidCallback? onAddLesson;
   final void Function(Lesson lesson)? onEditLesson;
   final void Function(Lesson lesson)? onDeleteLesson;
+  final void Function(Lesson lesson)? onAddLessonVideos;
 
   /// Called after a successful reorder so the parent can refresh.
   ///
@@ -419,6 +428,7 @@ class ChapterTile extends StatefulWidget {
     this.onAddLesson,
     this.onEditLesson,
     this.onDeleteLesson,
+    this.onAddLessonVideos,
     this.onReordered,
   });
 
@@ -679,6 +689,9 @@ class _ChapterTileState extends State<ChapterTile> {
                       onDelete: widget.onDeleteLesson == null
                           ? null
                           : () => widget.onDeleteLesson!(lesson),
+                      onAddVideos: widget.onAddLessonVideos == null
+                          ? null
+                          : () => widget.onAddLessonVideos!(lesson),
                     ),
                   );
                 },
@@ -725,6 +738,7 @@ class _LessonTimelineRow extends StatelessWidget {
 
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+  final VoidCallback? onAddVideos;
 
   const _LessonTimelineRow({
     required this.lesson,
@@ -735,6 +749,7 @@ class _LessonTimelineRow extends StatelessWidget {
     this.draggable = false,
     this.onEdit,
     this.onDelete,
+    this.onAddVideos,
   });
 
   /// Where the node sits from the top of the row - lines up with the middle of
@@ -822,6 +837,25 @@ class _LessonTimelineRow extends StatelessWidget {
                               ),
                             ),
                           ),
+                          // Its own button, beside Edit: adding this week's
+                          // classes is the job that recurs, and it should not
+                          // mean walking the whole lesson form.
+                          if (onAddVideos != null)
+                            TextButton.icon(
+                              onPressed: onAddVideos,
+                              icon: const Icon(Icons.video_call_outlined,
+                                  size: 17),
+                              label: const Text('Add video',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)),
+                              style: TextButton.styleFrom(
+                                foregroundColor: LmsColors.primary,
+                                visualDensity: VisualDensity.compact,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8),
+                              ),
+                            ),
                           if (showActions) ...[
                             IconButton(
                               icon: const Icon(
