@@ -725,7 +725,7 @@ class _ChapterTileState extends State<ChapterTile> {
 /// Not a card. Cards inside an already-carded chapter stack borders three deep
 /// and the eye stops reading it as a sequence. A rail with a node per lesson
 /// says "these are in order" without adding another box.
-class _LessonTimelineRow extends StatelessWidget {
+class _LessonTimelineRow extends StatefulWidget {
   final Lesson lesson;
   final int index;
   final bool isFirst;
@@ -752,6 +752,13 @@ class _LessonTimelineRow extends StatelessWidget {
     this.onAddVideos,
   });
 
+  @override
+  State<_LessonTimelineRow> createState() => _LessonTimelineRowState();
+}
+
+class _LessonTimelineRowState extends State<_LessonTimelineRow> {
+  Lesson get lesson => widget.lesson;
+
   /// Where the node sits from the top of the row - lines up with the middle of
   /// the title line, not the middle of the row, which drifts as badges wrap.
   static const double _nodeTop = 15;
@@ -761,7 +768,7 @@ class _LessonTimelineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ui = LessonTypeUI.of(LessonTypeX.fromApiValue(lesson.type));
-    final showActions = onEdit != null || onDelete != null;
+    final showActions = widget.onEdit != null || widget.onDelete != null;
 
     return Material(
       color: Colors.transparent,
@@ -777,8 +784,8 @@ class _LessonTimelineRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // The handle replaces the rail's left margin rather than adding
-              // width, so a draggable list is not a wider list.
-              if (draggable)
+              // width, so a widget.draggable list is not a wider list.
+              if (widget.draggable)
                 Padding(
                   padding: const EdgeInsets.only(top: 9),
                   child: Tooltip(
@@ -795,9 +802,9 @@ class _LessonTimelineRow extends StatelessWidget {
                     // The rail, clipped at the ends so it doesn't dangle past
                     // the first and last node.
                     Positioned(
-                      top: isFirst ? _nodeTop : 0,
-                      bottom: isLast ? null : 0,
-                      height: isLast ? _nodeTop : null,
+                      top: widget.isFirst ? _nodeTop : 0,
+                      bottom: widget.isLast ? null : 0,
+                      height: widget.isLast ? _nodeTop : null,
                       child: Container(width: 2, color: LmsColors.border),
                     ),
                     // The node carries the lesson's type, so a reorderable
@@ -820,9 +827,18 @@ class _LessonTimelineRow extends StatelessWidget {
                   ],
                 ),
               ),
+              // A card per lesson rather than a line of text: at four or five
+              // to a subject, rows ran together and the badges below one read
+              // as belonging to the next.
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 6, top: 6, bottom: 10),
+                child: Container(
+                  margin: const EdgeInsets.only(right: 6, top: 4, bottom: 8),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+                  decoration: BoxDecoration(
+                    color: LmsColors.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: LmsColors.border),
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -833,16 +849,52 @@ class _LessonTimelineRow extends StatelessWidget {
                               lesson.title,
                               style: const TextStyle(
                                 fontSize: 13.5,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
+                          // How many videos, next to the name of the thing
+                          // that holds them. In the badge row it was a number
+                          // among words and read as just another state.
+                          if (lesson.videoCount > 0)
+                            Container(
+                              margin: const EdgeInsets.only(left: 10),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: LmsColors.primary,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: LmsColors.primary.withOpacity(0.28),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.play_arrow_rounded,
+                                      size: 15, color: Colors.white),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${lesson.videoCount} video'
+                                    '${lesson.videoCount == 1 ? '' : 's'}',
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white),
+                                  ),
+                                ],
+                              ),
+                            ),
                           // Its own button, beside Edit: adding this week's
                           // classes is the job that recurs, and it should not
                           // mean walking the whole lesson form.
-                          if (onAddVideos != null)
+                          if (widget.onAddVideos != null)
                             TextButton.icon(
-                              onPressed: onAddVideos,
+                              onPressed: widget.onAddVideos,
                               icon: const Icon(Icons.video_call_outlined,
                                   size: 17),
                               label: const Text('Add video',
@@ -865,7 +917,7 @@ class _LessonTimelineRow extends StatelessWidget {
                               ),
                               tooltip: 'Edit lesson',
                               visualDensity: VisualDensity.compact,
-                              onPressed: onEdit,
+                              onPressed: widget.onEdit,
                             ),
                             IconButton(
                               icon: const Icon(
@@ -875,7 +927,7 @@ class _LessonTimelineRow extends StatelessWidget {
                               ),
                               tooltip: 'Delete lesson',
                               visualDensity: VisualDensity.compact,
-                              onPressed: onDelete,
+                              onPressed: widget.onDelete,
                             ),
                           ],
                         ],
@@ -888,7 +940,7 @@ class _LessonTimelineRow extends StatelessWidget {
                         isFreePreview: lesson.isFreePreview,
                         planLabels: [
                           for (final id in lesson.planIds)
-                            planTitles[id] ?? 'Plan #$id',
+                            widget.planTitles[id] ?? 'Plan #$id',
                         ],
                         hasVideo: lesson.hasVideo,
                         videoCount: lesson.videoCount,
@@ -906,4 +958,5 @@ class _LessonTimelineRow extends StatelessWidget {
       ),
     );
   }
+
 }

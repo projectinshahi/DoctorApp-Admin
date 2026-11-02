@@ -157,7 +157,10 @@ class LessonBadgeRow extends StatelessWidget {
               icon: ui.icon,
               // "3 videos" rather than "Video": the count is the thing an
               // admin is checking when a lesson holds more than one.
-              label: isVideoType && videoCount > 1 ? '$videoCount videos' : ui.label,
+              // The type only. How many videos it holds is said once, by the
+              // count beside the title - saying it here too put a number in a
+              // row of states, where it read as one more label.
+              label: ui.label,
               // Grey until the API confirms a video exists - a blue play icon
               // on an empty lesson is what made the list misleading.
               color: isVideoType && hasVideo != true ? LmsColors.textGrey : ui.color,

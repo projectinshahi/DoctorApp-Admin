@@ -62,6 +62,11 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
   bool _youtubeTimedOut = false;
   String? _videoError;
   int? _initializedForLessonId;
+
+  /// Which video of the lesson is in the player. A lesson is a playlist now,
+  /// and part 1 is where it opens.
+  int _playingIndex = 0;
+
   Timer? _youtubeTimeoutTimer;
   bool _videoStarted = false; // NEW — controls when the thumbnail poster gets replaced
 
@@ -106,11 +111,37 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     return lower.contains('youtube.com') || lower.contains('youtu.be');
   }
 
+  /// The videos to offer, in order. Falls back to the single `videoUrl` for
+  /// a lesson saved before the list existed.
+  List<LessonVideo> _videosOf(LessonDetail lesson) {
+    if (lesson.videos.isNotEmpty) return lesson.videos;
+    final single = lesson.videoUrl;
+    return single == null || single.trim().isEmpty
+        ? const []
+        : [LessonVideo(videoUrl: single)];
+  }
+
+  /// Switches the player to another part, tearing the old one down first -
+  /// two players on one page would both be holding the sound.
+  void _playPart(LessonDetail lesson, int index) {
+    if (index == _playingIndex) return;
+    _resetVideoState();
+    setState(() {
+      _playingIndex = index;
+      _initializedForLessonId = null;
+      _videoError = null;
+    });
+    _initVideo(lesson);
+  }
+
   Future<void> _initVideo(LessonDetail lesson) async {
     if (_initializedForLessonId == lesson.id) return;
     _initializedForLessonId = lesson.id;
 
-    final url = lesson.videoUrl!;
+    final videos = _videosOf(lesson);
+    if (videos.isEmpty) return;
+    if (_playingIndex >= videos.length) _playingIndex = 0;
+    final url = videos[_playingIndex].videoUrl;
 
     if (_isYoutubeUrl(url)) {
       final videoId = YoutubePlayerController.convertUrlToId(url);
@@ -166,6 +197,133 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
         _isVideoInitializing = false;
       });
     }
+  }
+
+  /// Every video on the lesson, as a playlist under the player.
+  ///
+  /// A lesson with one video shows nothing here - the player is already the
+  /// whole story, and a list of one is furniture.
+  Widget _videoParts(LessonDetail lesson) {
+    final videos = _videosOf(lesson);
+    if (videos.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(16, 18, 16, 8),
+        child: Text('No videos on this lesson yet.',
+            style: TextStyle(fontSize: 12.5, color: LmsColors.textGrey)),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      decoration: BoxDecoration(
+        color: LmsColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: LmsColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            child: Row(
+              children: [
+                const Icon(Icons.playlist_play_rounded,
+                    size: 18, color: LmsColors.primary),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('Videos in this lesson',
+                      style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w800)),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: LmsColors.primarySoft,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text('${videos.length} parts',
+                      style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: LmsColors.primary)),
+                ),
+              ],
+            ),
+          ),
+          for (var i = 0; i < videos.length; i++) ...[
+            const Divider(height: 1, thickness: 1, color: LmsColors.border),
+            _partRow(lesson, videos[i], i),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _partRow(LessonDetail lesson, LessonVideo video, int index) {
+    final playing = index == _playingIndex;
+    final title = (video.title ?? '').trim();
+
+    return Material(
+      color: playing ? LmsColors.primarySoft : Colors.transparent,
+      child: InkWell(
+        onTap: () => _playPart(lesson, index),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          child: Row(
+            children: [
+              Icon(
+                playing
+                    ? Icons.equalizer_rounded
+                    : Icons.play_circle_outline_rounded,
+                size: 19,
+                color: playing ? LmsColors.primary : LmsColors.textGrey,
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title.isEmpty ? 'Part ${index + 1}' : title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight:
+                            playing ? FontWeight.w800 : FontWeight.w600,
+                        color: playing
+                            ? LmsColors.primary
+                            : LmsColors.textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      playing ? 'Now playing' : 'Part ${index + 1}',
+                      style: const TextStyle(
+                          fontSize: 11, color: LmsColors.textGrey),
+                    ),
+                  ],
+                ),
+              ),
+              if (video.lengthLabel != null)
+                Text(video.lengthLabel!,
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: LmsColors.textGrey)),
+              IconButton(
+                icon: const Icon(Icons.open_in_new_rounded, size: 15),
+                color: LmsColors.textGrey,
+                tooltip: 'Open in a new tab',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _openExternally(video.videoUrl),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openExternally(String url) async {
@@ -1475,6 +1633,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                   ),
 
                 _buildHeader(lesson),
+                _videoParts(lesson),
 
                 _buildSubscriptionSection(context, lesson),
 

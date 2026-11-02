@@ -559,7 +559,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                                     ? null
                                     : (lesson) =>
                                         _openLessonVideosSheet(c, lesson),
-                                onDeleteLesson: widget.readOnly
+                                    onDeleteLesson: widget.readOnly
                                     ? null
                                     : (lesson) => _confirmDeleteLesson(c, lesson),
                               ),
