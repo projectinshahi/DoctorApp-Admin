@@ -213,6 +213,12 @@ class Lesson {
   /// the counts rather than the rows — the row draws "3 videos · 1 deck" and
   /// never the videos themselves.
   final int videoCount;
+
+  /// How many of those videos are free, or null when the tree sent counts
+  /// only. The row says "2 videos · 1 free" when it knows and just the count
+  /// when it does not - a guess here would misstate what students can open.
+  final int? freeVideoCount;
+
   final int deckCount;
 
   Lesson({
@@ -230,6 +236,7 @@ class Lesson {
     this.videoUrl, // NEW
     this.videoKnown = false, // NEW
     this.videoCount = 0,
+    this.freeVideoCount,
     this.deckCount = 0,
     this.quizId,
     this.quizSubjectName,
@@ -270,13 +277,31 @@ class Lesson {
     videoKnown: json.containsKey("videoUrl"), // NEW
     // A response from before the counts existed falls back to the single
     // videoUrl, so an old server still draws the row right.
+    // The count block, else the rows themselves when the tree sends them,
+    // else the single videoUrl an older server knew about.
     videoCount: _count(json, "videos") ??
-        ((json["videoUrl"] as String?)?.trim().isNotEmpty == true ? 1 : 0),
+        (json["videos"] is List
+            ? (json["videos"] as List).length
+            : ((json["videoUrl"] as String?)?.trim().isNotEmpty == true
+                ? 1
+                : 0)),
+    freeVideoCount: _freeVideos(json),
     deckCount: _count(json, "rapidRecalls") ?? 0,
     quizId: (json["quizId"] as num?)?.toInt(),
     quizSubjectName: _nestedName(json["quiz"], "subject"),
     quizTopicName: _nestedName(json["quiz"], "topic"),
   );
+
+  /// Free videos, when the rows came with the tree. Null when only counts
+  /// did.
+  static int? _freeVideos(Map<String, dynamic> json) {
+    final raw = json["videos"];
+    if (raw is! List) return null;
+    return raw
+        .whereType<Map>()
+        .where((v) => '${v["accessType"] ?? "premium"}'.toLowerCase() == 'free')
+        .length;
+  }
 
   /// One number out of Prisma's `_count` block, or null when the server did
   /// not send one.

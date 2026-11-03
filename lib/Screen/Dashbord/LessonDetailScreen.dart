@@ -199,6 +199,81 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     }
   }
 
+  /// Which part's pill is mid-save, so only that one spins.
+  int? _savingAccessAt;
+
+  /// Flips one video between free and premium and saves it at once.
+  ///
+  /// The list is replace-all, so every row goes up with everything it holds -
+  /// sending only the changed one would delete the others.
+  Future<void> _toggleAccess(LessonDetail lesson, int index) async {
+    final videos = _videosOf(lesson);
+    final video = videos[index];
+    final makingFree = !video.isFree;
+
+    if (makingFree) {
+      final title = (video.title ?? '').trim();
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Make this video free?'),
+          content: Text(
+            '${title.isEmpty ? 'Part ${index + 1}' : title} will play for '
+            'everyone, including students without a subscription.',
+            style: const TextStyle(fontSize: 13.5, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Make it free')),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+
+    setState(() => _savingAccessAt = index);
+
+    final payload = [
+      for (var i = 0; i < videos.length; i++)
+        {
+          ...videos[i].toJson(),
+          'accessType':
+              i == index ? (makingFree ? 'free' : 'premium') : videos[i].accessType,
+        }
+    ];
+
+    final provider = LessonUpdateProvider();
+    final ok = await provider.updateLesson(
+      chapterId: lesson.chapterId,
+      lessonId: lesson.id,
+      videos: payload,
+    );
+
+    if (!mounted) return;
+    setState(() => _savingAccessAt = null);
+
+    if (!ok) {
+      // The pill never moved - the row still shows what the server holds.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: LmsColors.error,
+          content: Text(provider.errorMessage ?? 'That did not save'),
+        ),
+      );
+      return;
+    }
+
+    await context
+        .read<LessonDetailsProvider>()
+        .loadLesson(lesson.id, includeChapter: true);
+  }
+
   /// Every video on the lesson, as a playlist under the player.
   ///
   /// A lesson with one video shows nothing here - the player is already the
@@ -263,6 +338,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
   Widget _partRow(LessonDetail lesson, LessonVideo video, int index) {
     final playing = index == _playingIndex;
     final title = (video.title ?? '').trim();
+    final still = (video.thumbnailUrl ?? '').trim();
 
     return Material(
       color: playing ? LmsColors.primarySoft : Colors.transparent,
@@ -271,13 +347,47 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                playing
-                    ? Icons.equalizer_rounded
-                    : Icons.play_circle_outline_rounded,
-                size: 19,
-                color: playing ? LmsColors.primary : LmsColors.textGrey,
+              // The part's own still, with the play state drawn over it. A
+              // row of pictures is scanned; a row of identical icons is read.
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 74,
+                  height: 44,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (still.isEmpty)
+                        Container(color: LmsColors.bg)
+                      else
+                        Image.network(
+                          still,
+                          fit: BoxFit.cover,
+                          webHtmlElementStrategy:
+                              WebHtmlElementStrategy.prefer,
+                          errorBuilder: (_, _, _) =>
+                              Container(color: LmsColors.bg),
+                        ),
+                      Container(
+                        color: Colors.black.withOpacity(still.isEmpty ? 0 : 0.2),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          playing
+                              ? Icons.equalizer_rounded
+                              : Icons.play_arrow_rounded,
+                          size: 20,
+                          color: still.isEmpty
+                              ? (playing
+                                  ? LmsColors.primary
+                                  : LmsColors.textGrey)
+                              : Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -290,28 +400,44 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
-                        fontWeight:
-                            playing ? FontWeight.w800 : FontWeight.w600,
-                        color: playing
-                            ? LmsColors.primary
-                            : LmsColors.textDark,
+                        fontWeight: playing ? FontWeight.w800 : FontWeight.w600,
+                        color:
+                            playing ? LmsColors.primary : LmsColors.textDark,
                       ),
                     ),
-                    const SizedBox(height: 1),
-                    Text(
-                      playing ? 'Now playing' : 'Part ${index + 1}',
-                      style: const TextStyle(
-                          fontSize: 11, color: LmsColors.textGrey),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        _accessPill(lesson, video, index),
+                        const SizedBox(width: 6),
+                        Text(
+                          playing ? 'Now playing' : 'Part ${index + 1}',
+                          style: const TextStyle(
+                              fontSize: 11, color: LmsColors.textGrey),
+                        ),
+                        if (video.lengthLabel != null) ...[
+                          const SizedBox(width: 6),
+                          Text('· ${video.lengthLabel}',
+                              style: const TextStyle(
+                                  fontSize: 11, color: LmsColors.textGrey)),
+                        ],
+                      ],
                     ),
+                    if ((video.description ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        video.description!.trim(),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11.5,
+                            height: 1.35,
+                            color: LmsColors.textGrey),
+                      ),
+                    ],
                   ],
                 ),
               ),
-              if (video.lengthLabel != null)
-                Text(video.lengthLabel!,
-                    style: const TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                        color: LmsColors.textGrey)),
               IconButton(
                 icon: const Icon(Icons.open_in_new_rounded, size: 15),
                 color: LmsColors.textGrey,
@@ -319,6 +445,57 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                 visualDensity: VisualDensity.compact,
                 onPressed: () => _openExternally(video.videoUrl),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Free or premium for this part, and the control that changes it.
+  ///
+  /// The lesson's own badge says nothing about which of its videos a student
+  /// without a subscription can open - that is what this is for.
+  Widget _accessPill(LessonDetail lesson, LessonVideo video, int index) {
+    final free = video.isFree;
+    final colour = free ? const Color(0xFF14A38B) : kPremiumColor;
+    final saving = _savingAccessAt == index;
+
+    return Tooltip(
+      message: free ? 'Tap to make it premium' : 'Tap to make it free',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: saving ? null : () => _toggleAccess(lesson, index),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: colour.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: colour.withOpacity(0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (saving)
+                SizedBox(
+                  width: 11,
+                  height: 11,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 1.6, color: colour),
+                )
+              else
+                Icon(
+                    free
+                        ? Icons.lock_open_rounded
+                        : Icons.workspace_premium_rounded,
+                    size: 11,
+                    color: colour),
+              const SizedBox(width: 3),
+              Text(free ? 'Free' : 'Premium',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: colour)),
             ],
           ),
         ),

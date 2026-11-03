@@ -759,6 +759,20 @@ class _LessonTimelineRow extends StatefulWidget {
 class _LessonTimelineRowState extends State<_LessonTimelineRow> {
   Lesson get lesson => widget.lesson;
 
+  /// "3 videos · 1 free", or "all free" / "all premium" when they agree.
+  ///
+  /// The lesson's own tier says nothing about this any more - each video
+  /// carries its own - and the mix is what an admin needs from a list.
+  static String _videoLabel(Lesson lesson) {
+    final total = lesson.videoCount;
+    final plural = '$total video${total == 1 ? '' : 's'}';
+    final free = lesson.freeVideoCount;
+    if (free == null || total == 0) return plural;
+    if (free == 0) return '$plural · all premium';
+    if (free == total) return '$plural · all free';
+    return '$plural · $free free';
+  }
+
   /// Where the node sits from the top of the row - lines up with the middle of
   /// the title line, not the middle of the row, which drifts as badges wrap.
   static const double _nodeTop = 15;
@@ -853,60 +867,16 @@ class _LessonTimelineRowState extends State<_LessonTimelineRow> {
                               ),
                             ),
                           ),
-                          // How many videos, next to the name of the thing
-                          // that holds them. In the badge row it was a number
-                          // among words and read as just another state.
-                          if (lesson.videoCount > 0)
-                            Container(
-                              margin: const EdgeInsets.only(left: 10),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: LmsColors.primary,
-                                borderRadius: BorderRadius.circular(20),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: LmsColors.primary.withOpacity(0.28),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.play_arrow_rounded,
-                                      size: 15, color: Colors.white),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${lesson.videoCount} video'
-                                    '${lesson.videoCount == 1 ? '' : 's'}',
-                                    style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w800,
-                                        color: Colors.white),
-                                  ),
-                                ],
-                              ),
-                            ),
                           // Its own button, beside Edit: adding this week's
                           // classes is the job that recurs, and it should not
                           // mean walking the whole lesson form.
                           if (widget.onAddVideos != null)
-                            TextButton.icon(
-                              onPressed: widget.onAddVideos,
+                            IconButton(
                               icon: const Icon(Icons.video_call_outlined,
-                                  size: 17),
-                              label: const Text('Add video',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700)),
-                              style: TextButton.styleFrom(
-                                foregroundColor: LmsColors.primary,
-                                visualDensity: VisualDensity.compact,
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 8),
-                              ),
+                                  size: 17, color: LmsColors.primary),
+                              tooltip: 'Add video',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: widget.onAddVideos,
                             ),
                           if (showActions) ...[
                             IconButton(
@@ -932,7 +902,33 @@ class _LessonTimelineRowState extends State<_LessonTimelineRow> {
                           ],
                         ],
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 6),
+                      if (lesson.videoCount > 0) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: LmsColors.primary,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.play_arrow_rounded,
+                                  size: 15, color: Colors.white),
+                              const SizedBox(width: 5),
+                              Text(
+                                _videoLabel(lesson),
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
                       LessonBadgeRow(
                         type: lesson.type,
                         status: lesson.status,

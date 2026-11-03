@@ -174,12 +174,18 @@ class LessonBadgeRow extends StatelessWidget {
           compact: compact,
         ),
 
-        LessonBadge(
-          icon: isPremium ? Icons.workspace_premium_rounded : Icons.lock_open_rounded,
-          label: isPremium ? 'Premium' : 'Free',
-          color: isPremium ? kPremiumColor : LmsColors.success,
-          compact: compact,
-        ),
+        // The lesson's own access covers its quiz, its notes and its text -
+        // never its videos, which each carry their own. On a lesson that has
+        // none of those, it would be a badge about nothing.
+        if (hasQuiz || isQuizType)
+          LessonBadge(
+            icon: isPremium
+                ? Icons.workspace_premium_rounded
+                : Icons.lock_open_rounded,
+            label: isPremium ? 'Quiz: Premium' : 'Quiz: Free',
+            color: isPremium ? kPremiumColor : LmsColors.success,
+            compact: compact,
+          ),
 
         // Named plans only. "Any subscription" is gone: every premium lesson
         // said it, which made the row longer without telling anyone anything

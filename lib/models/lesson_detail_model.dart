@@ -94,8 +94,17 @@ class LessonVideo {
   final String videoUrl;
   final String? videoPublicId;
   final String? thumbnailUrl;
+
+  /// A line about this part, shown under its title.
+  final String? description;
+
   final int? durationSeconds;
   final int displayOrder;
+
+  /// `free` | `premium`, per video, so the first part of a paid lesson can be
+  /// the sample. Premium when the server says nothing - a video must never
+  /// open itself by default.
+  final String accessType;
 
   const LessonVideo({
     this.id,
@@ -103,9 +112,13 @@ class LessonVideo {
     required this.videoUrl,
     this.videoPublicId,
     this.thumbnailUrl,
+    this.description,
     this.durationSeconds,
     this.displayOrder = 0,
+    this.accessType = 'premium',
   });
+
+  bool get isFree => accessType.toLowerCase() == 'free';
 
   factory LessonVideo.fromJson(Map<String, dynamic> json) => LessonVideo(
         id: (json['id'] as num?)?.toInt(),
@@ -115,8 +128,12 @@ class LessonVideo {
         videoUrl: '${json['videoUrl'] ?? ''}',
         videoPublicId: json['videoPublicId'] as String?,
         thumbnailUrl: json['thumbnailUrl'] as String?,
+        description: (json['description'] as String?)?.trim().isNotEmpty == true
+            ? (json['description'] as String).trim()
+            : null,
         durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
         displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
+        accessType: '${json['accessType'] ?? 'premium'}',
       );
 
   /// What the save sends. `displayOrder` is left out on purpose: the server
@@ -127,7 +144,9 @@ class LessonVideo {
         if (title != null) 'title': title,
         if (videoPublicId != null) 'videoPublicId': videoPublicId,
         if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
+        if (description != null) 'description': description,
         if (durationSeconds != null) 'durationSeconds': durationSeconds,
+        'accessType': accessType,
       };
 
   /// "10:10", or null when the server never learned the length — a pasted

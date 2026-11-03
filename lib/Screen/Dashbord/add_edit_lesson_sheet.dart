@@ -12,6 +12,7 @@ import '../../models/quiz_model.dart';
 import '../../services/quiz_service.dart';
 import '../../services/sheet_question_sync_service.dart';
 import '../../widget/sheet_quiz_picker.dart';
+import '../../widget/video_access_switch.dart';
 import 'lesson_badges.dart'; // LessonBadge, reused for the deck chips
 
 /// A media slot on the lesson sheet, in one of four states: waiting for a
@@ -302,33 +303,27 @@ class _UploadBadge extends StatelessWidget {
       );
 }
 
-/// Free or premium, as one checkbox.
+/// Who can open this lesson's quiz, notes and text.
 ///
-/// Ticked means every student can open it. Unticked means a subscription is
-/// needed - and which subscription is the plan's business: a plan that buys
-/// `video_lecture` opens premium videos, one that buys `mcq` opens premium
-/// quizzes, so the same lesson can be open to one paying student and closed to
-/// another without anything being set here.
+/// Not its videos: each of those carries its own free/premium, and a free
+/// part inside a premium lesson is the sample. This switch stopped being
+/// about the lesson as a whole the day that shipped.
 class _FreeSwitch extends StatelessWidget {
   final bool isFree;
-  final LessonType type;
 
-  /// On a premium course a ticked box is a free preview, which is worth
-  /// saying: it is the one lesson students who have paid nothing will see.
+  /// On a premium course a ticked box is a free preview of the quiz, which is
+  /// worth naming.
   final bool coursePremium;
   final ValueChanged<bool> onChanged;
 
   const _FreeSwitch({
     required this.isFree,
-    required this.type,
     required this.coursePremium,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    final noun = type == LessonType.quiz ? 'quiz' : 'video';
-
     return InkWell(
       onTap: () => onChanged(!isFree),
       borderRadius: BorderRadius.circular(12),
@@ -355,20 +350,17 @@ class _FreeSwitch extends StatelessWidget {
                 children: [
                   Text(
                       coursePremium && isFree
-                          ? 'Free preview'
-                          : 'Free for everyone',
+                          ? 'Quiz access: free preview'
+                          : 'Quiz access: free for everyone',
                       style: const TextStyle(
                           fontSize: 13, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 2),
                   Text(
                     isFree
-                        ? coursePremium
-                            ? 'Open to everyone on a paid course - this $noun '
-                                'is what a student sees before subscribing.'
-                            : 'Any student can open this $noun, subscribed or '
-                                'not.'
+                        ? 'Any student can take this quiz, subscribed or not. '
+                            'Each video sets its own access separately.'
                         : 'Premium. A student needs a subscription whose plan '
-                            'includes ${type == LessonType.quiz ? 'quizzes' : 'video lectures'}.',
+                            'includes quizzes. Videos are set one by one.',
                     style: const TextStyle(
                         fontSize: 12, height: 1.35, color: LmsColors.textGrey),
                   ),
@@ -490,21 +482,41 @@ Future<bool?> showAddEditLessonSheet(
 class _VideoDraft {
   final TextEditingController title;
   final TextEditingController url;
+  final TextEditingController description;
+
+  /// The video's own gate. A free part inside a premium lesson is the sample;
+  /// the lesson's own access covers its quiz and notes, not this.
+  bool free;
+
+  /// Carried through rather than edited here - the Add video sheet uploads
+  /// stills, and dropping one on a title edit would be a silent deletion.
+  final String? thumbnailUrl;
 
   /// Carried through untouched so re-saving a lesson does not orphan an
   /// uploaded video on Cloudinary, or lose a length the server already knows.
   final String? videoPublicId;
   final int? durationSeconds;
 
-  _VideoDraft({String? title, String? url, this.videoPublicId, this.durationSeconds})
-      : title = TextEditingController(text: title ?? ''),
-        url = TextEditingController(text: url ?? '');
+  _VideoDraft({
+    String? title,
+    String? url,
+    String? description,
+    this.thumbnailUrl,
+    this.videoPublicId,
+    this.durationSeconds,
+    this.free = false,
+  })  : title = TextEditingController(text: title ?? ''),
+        url = TextEditingController(text: url ?? ''),
+        description = TextEditingController(text: description ?? '');
 
   factory _VideoDraft.from(LessonVideo v) => _VideoDraft(
         title: v.title,
         url: v.videoUrl,
+        description: v.description,
+        thumbnailUrl: v.thumbnailUrl,
         videoPublicId: v.videoPublicId,
         durationSeconds: v.durationSeconds,
+        free: v.isFree,
       );
 
   bool get isEmpty => url.text.trim().isEmpty && title.text.trim().isEmpty;
@@ -515,9 +527,16 @@ class _VideoDraft {
     final link = url.text.trim();
     if (link.isEmpty) return null;
     final name = title.text.trim();
+    final blurb = description.text.trim();
     return {
       'videoUrl': link,
       if (name.isNotEmpty) 'title': name,
+      if (blurb.isNotEmpty) 'description': blurb,
+      if (thumbnailUrl != null && thumbnailUrl!.isNotEmpty)
+        'thumbnailUrl': thumbnailUrl,
+      // Always sent. A row without it takes the server's default, and an edit
+      // about a title could then open a paid video.
+      'accessType': free ? 'free' : 'premium',
       // Only meaningful while the link is the one it was uploaded for.
       if (videoPublicId != null && videoPublicId!.isNotEmpty) 'videoPublicId': videoPublicId,
       if (durationSeconds != null) 'durationSeconds': durationSeconds,
@@ -527,6 +546,7 @@ class _VideoDraft {
   void dispose() {
     title.dispose();
     url.dispose();
+    description.dispose();
   }
 }
 
@@ -752,7 +772,10 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     await delete(publicId: publicId);
   }
 
-  void _addVideo() => setState(() => _videos.add(_VideoDraft()));
+  void _addVideo() => setState(() => _videos.add(_VideoDraft(
+        free: VideoAccessSwitch.defaultFree(
+            coursePremium: widget.coursePremium ?? false),
+      )));
 
   void _removeVideo(int index) {
     setState(() => _videos.removeAt(index).dispose());
@@ -1101,6 +1124,13 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
             ],
           ),
           const SizedBox(height: 6),
+          VideoAccessSwitch(
+            free: draft.free,
+            coursePremium: widget.coursePremium ?? false,
+            enabled: !_isCreatingQuiz,
+            onChanged: (free) => setState(() => draft.free = free),
+          ),
+          const SizedBox(height: 8),
           TextFormField(
             controller: draft.title,
             decoration: _inputDecoration('Title · optional, e.g. "Part 1"'),
@@ -1130,6 +1160,14 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
               }
               return null;
             },
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: draft.description,
+            minLines: 2,
+            maxLines: null,
+            decoration: _inputDecoration('Description · optional'),
+            style: const TextStyle(fontSize: 13.5),
           ),
         ],
       ),
@@ -1271,21 +1309,22 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 ),
                 const SizedBox(height: 18),
 
-                // Reads as one decision about this lesson, not a pricing
-                // model: which plan opens it is the plan's business.
-                _FreeSwitch(
-                  isFree: _accessType == LessonAccessType.free,
-                  type: _type,
-                  coursePremium: widget.coursePremium ?? false,
-                  onChanged: (free) => setState(() => _accessType =
-                      free ? LessonAccessType.free : LessonAccessType.premium),
-                ),
-
                 // Only on a quiz lesson. A video lesson is a video and its
                 // cover - the picker in the middle of that form was a question
                 // nobody adding a class wanted to answer.
                 if (_isQuiz) ...[
                   const SizedBox(height: 18),
+                  // The lesson's own access covers its quiz, its notes and
+                  // its text - not its videos. Each video carries its own.
+                  _FreeSwitch(
+                    isFree: _accessType == LessonAccessType.free,
+                    coursePremium: widget.coursePremium ?? false,
+                    onChanged: (free) => setState(() => _accessType = free
+                        ? LessonAccessType.free
+                        : LessonAccessType.premium),
+                  ),
+                  const SizedBox(height: 18),
+
                   _FieldLabel(_isQuiz ? 'Quiz' : 'Quiz (optional)'),
                   const SizedBox(height: 2),
                   Text(

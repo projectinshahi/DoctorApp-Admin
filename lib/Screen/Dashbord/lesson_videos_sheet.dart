@@ -1,6 +1,9 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/theam/theam_dart.dart';
+import '../../services/question_image_service.dart';
+import '../../widget/video_access_switch.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../provider/lesson_upload_provider.dart';
 
@@ -15,6 +18,7 @@ Future<bool?> showLessonVideosSheet(
   required int lessonId,
   required String lessonTitle,
   List<LessonVideo> initialVideos = const [],
+  bool coursePremium = false,
 }) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -25,6 +29,7 @@ Future<bool?> showLessonVideosSheet(
       lessonId: lessonId,
       lessonTitle: lessonTitle,
       initialVideos: initialVideos,
+      coursePremium: coursePremium,
     ),
   );
 }
@@ -34,12 +39,14 @@ class _LessonVideosSheet extends StatefulWidget {
   final int lessonId;
   final String lessonTitle;
   final List<LessonVideo> initialVideos;
+  final bool coursePremium;
 
   const _LessonVideosSheet({
     required this.chapterId,
     required this.lessonId,
     required this.lessonTitle,
     required this.initialVideos,
+    required this.coursePremium,
   });
 
   @override
@@ -49,11 +56,15 @@ class _LessonVideosSheet extends StatefulWidget {
 class _VideoRow {
   final TextEditingController title;
   final TextEditingController url;
+  final TextEditingController description;
 
-  /// Already on the lesson. Shown as a line of text rather than two fields:
-  /// an admin here came to add the next part, not to re-read the last one.
-  /// It still travels in the payload - the save replaces the whole list.
-  final bool existing;
+  /// The still students see before they press play. Uploaded here, so a part
+  /// can have its own rather than borrowing the lesson's cover.
+  final TextEditingController thumbnail;
+
+  /// Free parts are the sample a paid lesson sells itself with. New rows
+  /// start premium: a video must never open itself by default.
+  bool free;
 
   /// Carried through untouched: re-saving must not orphan a video that was
   /// uploaded rather than linked, or lose a length the server already knows.
@@ -63,18 +74,24 @@ class _VideoRow {
   _VideoRow({
     String? title,
     String? url,
+    String? description,
+    String? thumbnail,
     this.videoPublicId,
     this.durationSeconds,
-    this.existing = false,
+    this.free = false,
   })  : title = TextEditingController(text: title ?? ''),
-        url = TextEditingController(text: url ?? '');
+        url = TextEditingController(text: url ?? ''),
+        description = TextEditingController(text: description ?? ''),
+        thumbnail = TextEditingController(text: thumbnail ?? '');
 
   factory _VideoRow.from(LessonVideo v) => _VideoRow(
         title: v.title,
         url: v.videoUrl,
+        description: v.description,
+        thumbnail: v.thumbnailUrl,
         videoPublicId: v.videoPublicId,
         durationSeconds: v.durationSeconds,
-        existing: true,
+        free: v.isFree,
       );
 
   /// Null for a row with no link. A row someone added and left alone is
@@ -83,18 +100,25 @@ class _VideoRow {
     final link = url.text.trim();
     if (link.isEmpty) return null;
     final name = title.text.trim();
+    final blurb = description.text.trim();
+    final still = thumbnail.text.trim();
     return {
       'videoUrl': link,
       if (name.isNotEmpty) 'title': name,
+      if (blurb.isNotEmpty) 'description': blurb,
+      if (still.isNotEmpty) 'thumbnailUrl': still,
       if (videoPublicId != null && videoPublicId!.isNotEmpty)
         'videoPublicId': videoPublicId,
       if (durationSeconds != null) 'durationSeconds': durationSeconds,
+      'accessType': free ? 'free' : 'premium',
     };
   }
 
   void dispose() {
     title.dispose();
     url.dispose();
+    description.dispose();
+    thumbnail.dispose();
   }
 }
 
@@ -129,11 +153,60 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
   ValueKey<int> _keyFor(_VideoRow row) =>
       _keys.putIfAbsent(row, () => ValueKey(_nextKey++));
 
+  /// One tint per part, cycled. Four identical grey cards are a wall; a
+  /// different wash on each makes "the third one" findable.
+  static const _tints = [
+    Color(0xFFEFF4FF),
+    Color(0xFFF1FAF4),
+    Color(0xFFFFF6EC),
+    Color(0xFFF7F0FF),
+    Color(0xFFFFF0F3),
+  ];
+  static const _edges = [
+    Color(0xFFBFD3FF),
+    Color(0xFFBFE3CC),
+    Color(0xFFF2D6AE),
+    Color(0xFFDCC8F5),
+    Color(0xFFF5C2CD),
+  ];
+
   /// "Part 3" on a lesson that already has two, so the parts number
   /// themselves and the title is one less thing to type.
-  _VideoRow _newRow() => _VideoRow(title: 'Part ${_rows.length + 1}');
+  _VideoRow _newRow() => _VideoRow(
+        title: 'Part ${_rows.length + 1}',
+        free: VideoAccessSwitch.defaultFree(
+            coursePremium: widget.coursePremium),
+      );
 
   void _add() => setState(() => _rows.add(_newRow()));
+
+  /// Which row's thumbnail is uploading, so only that one shows a spinner.
+  int? _uploadingThumbAt;
+
+  Future<void> _pickThumbnail(int index) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: QuestionImageService.allowedExtensions,
+      withData: true, // web has no file path to read from
+    );
+    final file = picked?.files.single;
+    if (file == null || file.bytes == null) return;
+
+    setState(() => _uploadingThumbAt = index);
+    final result = await QuestionImageService()
+        .upload(bytes: file.bytes!, filename: file.name);
+
+    if (!mounted) return;
+    setState(() {
+      _uploadingThumbAt = null;
+      if (result.isSuccess) {
+        _rows[index].thumbnail.text = result.image!.url;
+        _error = null;
+      } else {
+        _error = result.errorMessage;
+      }
+    });
+  }
 
   void _remove(int index) => setState(() {
         final row = _rows.removeAt(index);
@@ -234,16 +307,25 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
               ),
             ),
 
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
                 onPressed: _isSaving ? null : _add,
                 icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('Add video',
+                label: const Text('Add another part',
                     style:
-                        TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                        TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: LmsColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  side: const BorderSide(
+                      color: LmsColors.primary, style: BorderStyle.solid),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
               ),
             ),
+
 
             if (_error != null) ...[
               const SizedBox(height: 6),
@@ -311,9 +393,9 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
       decoration: BoxDecoration(
-        color: LmsColors.bg,
+        color: _tints[index % _tints.length],
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: LmsColors.border),
+        border: Border.all(color: _edges[index % _edges.length]),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,31 +430,23 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(right: 6, bottom: 8),
+            child: VideoAccessSwitch(
+              free: row.free,
+              coursePremium: widget.coursePremium,
+              enabled: !_isSaving,
+              onChanged: (free) => setState(() => row.free = free),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 6),
-            child: row.existing
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (row.title.text.trim().isNotEmpty)
-                        Text(row.title.text.trim(),
-                            style: const TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w600)),
-                      Text(
-                        row.url.text.trim(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, color: LmsColors.textGrey),
-                      ),
-                    ],
-                  )
-                : Column(
+            child: Column(
                     children: [
                       TextField(
                         controller: row.url,
-                        autofocus: index == _rows.length - 1,
+                        autofocus: index == _rows.length - 1 &&
+                            row.url.text.trim().isEmpty,
                         // Keeps the Save button's count honest as the link
                         // is pasted.
                         onChanged: (_) => setState(() {}),
@@ -385,6 +459,66 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
                         style: const TextStyle(fontSize: 13),
                         decoration: _decoration('Title (optional)'),
                       ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: row.description,
+                        minLines: 2,
+                        maxLines: null,
+                        style: const TextStyle(fontSize: 13),
+                        decoration:
+                            _decoration('Description (optional)'),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: row.thumbnail,
+                              style: const TextStyle(fontSize: 13),
+                              decoration: _decoration(
+                                  'Thumbnail link, or upload one'),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          _uploadingThumbAt == index
+                              ? const Padding(
+                                  padding: EdgeInsets.all(10),
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  ),
+                                )
+                              : IconButton(
+                                  tooltip: 'Upload a thumbnail',
+                                  onPressed: _isSaving
+                                      ? null
+                                      : () => _pickThumbnail(index),
+                                  icon: const Icon(
+                                      Icons.add_photo_alternate_outlined,
+                                      size: 19,
+                                      color: LmsColors.primary),
+                                ),
+                        ],
+                      ),
+                      if (row.thumbnail.text.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            row.thumbnail.text.trim(),
+                            height: 70,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            // Through an <img> element, so a host with no
+                            // CORS headers still shows the picture.
+                            webHtmlElementStrategy:
+                                WebHtmlElementStrategy.prefer,
+                            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
           ),

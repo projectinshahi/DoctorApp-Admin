@@ -5,6 +5,7 @@ import 'package:admin_drapp/models/lesson_detail_model.dart';
 import 'package:admin_drapp/models/lesson_model.dart';
 
 void main() {
+  _videoAccessTests();
   group('a lesson holds several videos', () {
     test('reads the list in order and keeps what the save has to resend', () {
       final lesson = Lesson.fromJson({
@@ -38,13 +39,17 @@ void main() {
       expect(lesson.videos.last.title, isNull);
 
       // What goes back up: no displayOrder — the array's order is the order.
+      // accessType rides along, premium unless the server said otherwise, so
+      // a video never opens itself by default.
       expect(lesson.videos.first.toJson(), {
         'videoUrl': 'https://cdn/one.mp4',
         'title': 'Part 1',
         'videoPublicId': 'lesson_videos/abc',
         'durationSeconds': 610,
+        'accessType': 'premium',
       });
-      expect(lesson.videos.last.toJson(), {'videoUrl': 'https://cdn/two.mp4'});
+      expect(lesson.videos.last.toJson(),
+          {'videoUrl': 'https://cdn/two.mp4', 'accessType': 'premium'});
     });
 
     test('a response from before the feature still shows its one video', () {
@@ -178,6 +183,52 @@ void main() {
       });
       expect(unknown.videoCount, 0);
       expect(unknown.hasVideo, isNull);
+    });
+  });
+}
+
+/// Free or premium is the video's own, not the lesson's.
+void _videoAccessTests() {
+  group('each video carries its own access', () {
+    test('premium unless the server says free', () {
+      final lesson = tree.Lesson.fromJson({
+        'id': 1,
+        'title': 'Pituitary Gland',
+        'type': 'video',
+        'videos': [
+          {'videoUrl': 'https://cdn/one.mp4', 'accessType': 'free'},
+          {'videoUrl': 'https://cdn/two.mp4'},
+        ],
+      });
+
+      // The tree counts the free ones so a row can say "2 videos · 1 free".
+      expect(lesson.videoCount, 2);
+      expect(lesson.freeVideoCount, 1);
+    });
+
+    test('counts only, and the row makes no claim about the mix', () {
+      final lesson = tree.Lesson.fromJson({
+        'id': 1,
+        'title': 'Pituitary Gland',
+        'type': 'video',
+        '_count': {'videos': 3},
+      });
+
+      expect(lesson.videoCount, 3);
+      expect(lesson.freeVideoCount, isNull);
+    });
+
+    test('a saved video round-trips its access and description', () {
+      final video = LessonVideo.fromJson({
+        'videoUrl': 'https://cdn/one.mp4',
+        'title': 'Part 1',
+        'description': 'Anterior pituitary.',
+        'accessType': 'free',
+      });
+
+      expect(video.isFree, isTrue);
+      expect(video.toJson()['accessType'], 'free');
+      expect(video.toJson()['description'], 'Anterior pituitary.');
     });
   });
 }
