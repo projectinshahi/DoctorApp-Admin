@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
 import '../../core/theam/theam_dart.dart';
 import '../../models/lesson_detail_model.dart';
@@ -23,6 +21,7 @@ import '../../services/admin_plan_services.dart';
 import 'add_edit_lesson_sheet.dart';
 import 'add_edit_plan_sheet.dart';
 import 'lesson_subscription_sheet.dart';
+import 'lesson_video_player_screen.dart';
 import 'lesson_badges.dart';
 import '../../widget/breadcrumb_widget.dart';
 
@@ -55,20 +54,12 @@ class _LessonDetailBody extends StatefulWidget {
 }
 
 class _LessonDetailBodyState extends State<_LessonDetailBody> {
-  VideoPlayerController? _videoController;
-  YoutubePlayerController? _youtubeController;
-  bool _isVideoInitializing = false;
-  bool _youtubeReady = false;
-  bool _youtubeTimedOut = false;
-  String? _videoError;
-  int? _initializedForLessonId;
+  /// Which part's pill is mid-save, so only that one spins.
+  int? _savingAccessAt;
 
-  /// Which video of the lesson is in the player. A lesson is a playlist now,
-  /// and part 1 is where it opens.
-  int _playingIndex = 0;
-
-  Timer? _youtubeTimeoutTimer;
-  bool _videoStarted = false; // NEW — controls when the thumbnail poster gets replaced
+  /// null = every part. A lesson of twenty parts is read by tier, not by
+  /// scrolling to find the free ones.
+  bool? _accessFilter;
 
   /// Every plan sold on this lesson's course, so the subscription section can
   /// show the full ladder - not just the one plan attached to the lesson.
@@ -106,11 +97,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     });
   }
 
-  bool _isYoutubeUrl(String url) {
-    final lower = url.toLowerCase();
-    return lower.contains('youtube.com') || lower.contains('youtu.be');
-  }
-
   /// The videos to offer, in order. Falls back to the single `videoUrl` for
   /// a lesson saved before the list existed.
   List<LessonVideo> _videosOf(LessonDetail lesson) {
@@ -120,87 +106,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
         ? const []
         : [LessonVideo(videoUrl: single)];
   }
-
-  /// Switches the player to another part, tearing the old one down first -
-  /// two players on one page would both be holding the sound.
-  void _playPart(LessonDetail lesson, int index) {
-    if (index == _playingIndex) return;
-    _resetVideoState();
-    setState(() {
-      _playingIndex = index;
-      _initializedForLessonId = null;
-      _videoError = null;
-    });
-    _initVideo(lesson);
-  }
-
-  Future<void> _initVideo(LessonDetail lesson) async {
-    if (_initializedForLessonId == lesson.id) return;
-    _initializedForLessonId = lesson.id;
-
-    final videos = _videosOf(lesson);
-    if (videos.isEmpty) return;
-    if (_playingIndex >= videos.length) _playingIndex = 0;
-    final url = videos[_playingIndex].videoUrl;
-
-    if (_isYoutubeUrl(url)) {
-      final videoId = YoutubePlayerController.convertUrlToId(url);
-      if (videoId == null) {
-        setState(() => _videoError = 'Invalid YouTube link.');
-        return;
-      }
-
-      setState(() {
-        _youtubeReady = false;
-        _youtubeTimedOut = false;
-        _youtubeController = YoutubePlayerController.fromVideoId(
-          videoId: videoId,
-          autoPlay: false,
-          params: const YoutubePlayerParams(showFullscreenButton: true),
-        );
-      });
-
-      _youtubeController!.listen((value) {
-        if (!_youtubeReady && value.playerState != PlayerState.unknown) {
-          if (!mounted) return;
-          setState(() => _youtubeReady = true);
-          _youtubeTimeoutTimer?.cancel();
-        }
-      });
-
-      _youtubeTimeoutTimer?.cancel();
-      _youtubeTimeoutTimer = Timer(const Duration(seconds: 20), () {
-        if (!mounted || _youtubeReady) return;
-        setState(() => _youtubeTimedOut = true);
-      });
-
-      return;
-    }
-
-    setState(() {
-      _isVideoInitializing = true;
-      _videoError = null;
-    });
-
-    try {
-      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
-      await controller.initialize();
-      if (!mounted) return;
-      setState(() {
-        _videoController = controller;
-        _isVideoInitializing = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _videoError = 'Failed to load video. Please try again.';
-        _isVideoInitializing = false;
-      });
-    }
-  }
-
-  /// Which part's pill is mid-save, so only that one spins.
-  int? _savingAccessAt;
 
   /// Flips one video between free and premium and saves it at once.
   ///
@@ -274,19 +179,25 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
         .loadLesson(lesson.id, includeChapter: true);
   }
 
-  /// Every video on the lesson, as a playlist under the player.
+  /// The lesson's videos: how many, which tier, one card each.
   ///
-  /// A lesson with one video shows nothing here - the player is already the
-  /// whole story, and a list of one is furniture.
+  /// Nothing plays here. A part opens on its own screen, where it can be
+  /// watched, re-tiered and edited without the rest of the lesson around it.
   Widget _videoParts(LessonDetail lesson) {
-    final videos = _videosOf(lesson);
-    if (videos.isEmpty) {
+    final all = _videosOf(lesson);
+    if (all.isEmpty) {
       return const Padding(
         padding: EdgeInsets.fromLTRB(16, 18, 16, 8),
         child: Text('No videos on this lesson yet.',
             style: TextStyle(fontSize: 12.5, color: LmsColors.textGrey)),
       );
     }
+
+    final freeCount = all.where((v) => v.isFree).length;
+    final shown = [
+      for (var i = 0; i < all.length; i++)
+        if (_accessFilter == null || all[i].isFree == _accessFilter) i
+    ];
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
@@ -299,158 +210,189 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             child: Row(
               children: [
                 const Icon(Icons.playlist_play_rounded,
                     size: 18, color: LmsColors.primary),
                 const SizedBox(width: 8),
-                const Expanded(
-                  child: Text('Videos in this lesson',
-                      style: TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w800)),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: LmsColors.primarySoft,
-                    borderRadius: BorderRadius.circular(20),
+                Expanded(
+                  child: Text(
+                    '${all.length} video${all.length == 1 ? '' : 's'} in this '
+                    'lesson',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w800),
                   ),
-                  child: Text('${videos.length} parts',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: LmsColors.primary)),
                 ),
               ],
             ),
           ),
-          for (var i = 0; i < videos.length; i++) ...[
-            const Divider(height: 1, thickness: 1, color: LmsColors.border),
-            _partRow(lesson, videos[i], i),
-          ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: Row(
+              children: [
+                _filterChip(null, 'All ${all.length}'),
+                const SizedBox(width: 6),
+                _filterChip(true, 'Free $freeCount'),
+                const SizedBox(width: 6),
+                _filterChip(false, 'Premium ${all.length - freeCount}'),
+              ],
+            ),
+          ),
+          if (shown.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(14, 0, 14, 16),
+              child: Text('No videos in that tier.',
+                  style: TextStyle(fontSize: 12, color: LmsColors.textGrey)),
+            )
+          else
+            for (final i in shown) ...[
+              const Divider(height: 1, thickness: 1, color: LmsColors.border),
+              _partRow(lesson, all[i], i),
+            ],
         ],
       ),
     );
   }
 
+  Widget _filterChip(bool? tier, String label) {
+    final on = _accessFilter == tier;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => setState(() => _accessFilter = tier),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: on ? LmsColors.primary : LmsColors.bg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: on ? LmsColors.primary : LmsColors.border),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+                color: on ? Colors.white : LmsColors.textGrey)),
+      ),
+    );
+  }
+
+  /// Opens the part on its own screen, and reloads if anything saved there.
+  Future<void> _openPlayer(LessonDetail lesson, int index) async {
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LessonVideoPlayerScreen(
+          lessonId: lesson.id,
+          chapterId: lesson.chapterId,
+          lessonTitle: lesson.title,
+          videos: _videosOf(lesson),
+          initialIndex: index,
+        ),
+      ),
+    );
+    if (changed != true || !mounted) return;
+    await context
+        .read<LessonDetailsProvider>()
+        .loadLesson(lesson.id, includeChapter: true);
+  }
+
+  /// One video, as a card: its still, its name, its tier.
   Widget _partRow(LessonDetail lesson, LessonVideo video, int index) {
-    final playing = index == _playingIndex;
     final title = (video.title ?? '').trim();
     final still = (video.thumbnailUrl ?? '').trim();
 
-    return Material(
-      color: playing ? LmsColors.primarySoft : Colors.transparent,
-      child: InkWell(
-        onTap: () => _playPart(lesson, index),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // The part's own still, with the play state drawn over it. A
-              // row of pictures is scanned; a row of identical icons is read.
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  width: 74,
-                  height: 44,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (still.isEmpty)
-                        Container(color: LmsColors.bg)
-                      else
-                        Image.network(
-                          still,
-                          fit: BoxFit.cover,
-                          webHtmlElementStrategy:
-                              WebHtmlElementStrategy.prefer,
-                          errorBuilder: (_, _, _) =>
-                              Container(color: LmsColors.bg),
-                        ),
-                      Container(
-                        color: Colors.black.withOpacity(still.isEmpty ? 0 : 0.2),
-                        alignment: Alignment.center,
-                        child: Icon(
-                          playing
-                              ? Icons.equalizer_rounded
-                              : Icons.play_arrow_rounded,
-                          size: 20,
-                          color: still.isEmpty
-                              ? (playing
-                                  ? LmsColors.primary
-                                  : LmsColors.textGrey)
-                              : Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return InkWell(
+      onTap: () => _openPlayer(lesson, index),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: 84,
+                height: 50,
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    Text(
-                      title.isEmpty ? 'Part ${index + 1}' : title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: playing ? FontWeight.w800 : FontWeight.w600,
-                        color:
-                            playing ? LmsColors.primary : LmsColors.textDark,
+                    if (still.isEmpty)
+                      Container(color: LmsColors.bg)
+                    else
+                      Image.network(
+                        still,
+                        fit: BoxFit.cover,
+                        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                        errorBuilder: (_, _, _) =>
+                            Container(color: LmsColors.bg),
                       ),
+                    Container(
+                      color: Colors.black.withOpacity(still.isEmpty ? 0 : 0.22),
+                      alignment: Alignment.center,
+                      child: Icon(Icons.play_arrow_rounded,
+                          size: 22,
+                          color: still.isEmpty
+                              ? LmsColors.textGrey
+                              : Colors.white),
                     ),
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        _accessPill(lesson, video, index),
-                        const SizedBox(width: 6),
-                        Text(
-                          playing ? 'Now playing' : 'Part ${index + 1}',
-                          style: const TextStyle(
-                              fontSize: 11, color: LmsColors.textGrey),
-                        ),
-                        if (video.lengthLabel != null) ...[
-                          const SizedBox(width: 6),
-                          Text('· ${video.lengthLabel}',
-                              style: const TextStyle(
-                                  fontSize: 11, color: LmsColors.textGrey)),
-                        ],
-                      ],
-                    ),
-                    if ((video.description ?? '').trim().isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        video.description!.trim(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 11.5,
-                            height: 1.35,
-                            color: LmsColors.textGrey),
-                      ),
-                    ],
                   ],
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.open_in_new_rounded, size: 15),
-                color: LmsColors.textGrey,
-                tooltip: 'Open in a new tab',
-                visualDensity: VisualDensity.compact,
-                onPressed: () => _openExternally(video.videoUrl),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title.isEmpty ? 'Part ${index + 1}' : title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: LmsColors.textDark),
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      _accessPill(lesson, video, index),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Part ${index + 1}'
+                        '${video.lengthLabel == null ? '' : ' · ${video.lengthLabel}'}',
+                        style: const TextStyle(
+                            fontSize: 11, color: LmsColors.textGrey),
+                      ),
+                    ],
+                  ),
+                  if ((video.description ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      video.description!.trim(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 11.5,
+                          height: 1.35,
+                          color: LmsColors.textGrey),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 14),
+              child: Icon(Icons.chevron_right_rounded,
+                  size: 18, color: LmsColors.textGrey),
+            ),
+          ],
         ),
       ),
     );
   }
+
 
   /// Free or premium for this part, and the control that changes it.
   ///
@@ -510,19 +452,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     }
   }
 
-  void _resetVideoState() {
-    _initializedForLessonId = null;
-    _videoController?.dispose();
-    _videoController = null;
-    _youtubeController?.close();
-    _youtubeController = null;
-    _youtubeReady = false;
-    _youtubeTimedOut = false;
-    _videoError = null;
-    _videoStarted = false;
-    _youtubeTimeoutTimer?.cancel();
-  }
-
   Future<void> _openEditSheet(BuildContext context, LessonDetail lesson) async {
     final updated = await showAddEditLessonSheet(
       context,
@@ -553,7 +482,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     );
 
     if (updated == true && context.mounted) {
-      setState(_resetVideoState);
       await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
     }
   }
@@ -664,51 +592,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     );
   }
 
-  Future<void> _confirmDeleteVideo(BuildContext context, LessonDetail lesson) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Remove video?'),
-        content: const Text('This permanently deletes the video from storage. This cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: LmsColors.error),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !context.mounted) return;
-
-    final updateProvider = context.read<LessonUpdateProvider>();
-
-    if (lesson.videoPublicId != null && lesson.videoPublicId!.isNotEmpty) {
-      final assetDeleted = await updateProvider.deleteVideoAsset(publicId: lesson.videoPublicId!);
-      if (!assetDeleted) {
-        if (context.mounted) _showSnack(context, updateProvider.errorMessage ?? 'Failed to remove video', isError: true);
-        return;
-      }
-    }
-
-    final updated = await updateProvider.updateLesson(
-      chapterId: lesson.chapterId,
-      lessonId: lesson.id,
-      removeVideo: true,
-    );
-
-    if (!context.mounted) return;
-    if (updated) {
-      _showSnack(context, 'Video removed');
-      setState(_resetVideoState);
-      await context.read<LessonDetailsProvider>().loadLesson(lesson.id, includeChapter: true);
-    } else {
-      _showSnack(context, updateProvider.errorMessage ?? 'Failed to remove video', isError: true);
-    }
-  }
-
   Future<void> _confirmDeleteNote(BuildContext context, LessonDetail lesson) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -751,232 +634,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     } else {
       _showSnack(context, updateProvider.errorMessage ?? 'Failed to remove note', isError: true);
     }
-  }
-
-  @override
-  void dispose() {
-    _videoController?.dispose();
-    _youtubeController?.close();
-    _youtubeTimeoutTimer?.cancel();
-    super.dispose();
-  }
-
-  /// The hero area at the top: video player (with thumbnail poster while
-  /// loading), or just the thumbnail as a static banner if there's no video.
-  Widget _buildHero(LessonDetail lesson) {
-    final hasThumbnail = lesson.thumbnailUrl != null && lesson.thumbnailUrl!.isNotEmpty;
-
-    // ── No video at all: show the thumbnail as a simple banner, or a
-    // placeholder icon block if there's no thumbnail either. ──
-    if (!lesson.hasVideo) {
-      if (!hasThumbnail) return const SizedBox.shrink();
-      return Container(
-        margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-        height: 180,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 20, offset: const Offset(0, 8))],
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.network(
-          lesson.thumbnailUrl!,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          errorBuilder: (_, __, ___) => Container(color: LmsColors.bg),
-        ),
-      );
-    }
-
-    // ── Has a video: build the player, with a thumbnail poster layered
-    // underneath until the video is actually ready and started. ──
-    Widget playerLayer;
-
-    if (_youtubeController != null) {
-      playerLayer = Stack(
-        fit: StackFit.expand,
-        children: [
-          YoutubePlayer(controller: _youtubeController!),
-          if (!_youtubeReady && !_youtubeTimedOut) _posterOverlay(hasThumbnail ? lesson.thumbnailUrl : null, loading: true),
-          if (_youtubeTimedOut && !_youtubeReady)
-            Container(
-              color: Colors.black87,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'This video is taking longer than usual to load.',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      onPressed: () => _openExternally(lesson.videoUrl!),
-                      icon: const Icon(Icons.open_in_new_rounded, size: 16),
-                      label: const Text('Watch on YouTube'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: LmsColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      );
-    } else if (_videoError != null) {
-      playerLayer = Stack(
-        fit: StackFit.expand,
-        children: [
-          _posterOverlay(hasThumbnail ? lesson.thumbnailUrl : null, loading: false, dim: true),
-          Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline_rounded, color: Colors.white, size: 30),
-                const SizedBox(height: 8),
-                Text(_videoError!, style: const TextStyle(color: Colors.white)),
-                const SizedBox(height: 10),
-                FilledButton(
-                  onPressed: () {
-                    _initializedForLessonId = null;
-                    _initVideo(lesson);
-                  },
-                  style: FilledButton.styleFrom(backgroundColor: LmsColors.primary),
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
-    } else if (_isVideoInitializing || _videoController == null || !_videoController!.value.isInitialized) {
-      playerLayer = _posterOverlay(hasThumbnail ? lesson.thumbnailUrl : null, loading: true);
-    } else {
-      // Video ready — show a tappable poster until the user hits play,
-      // then swap to the real player.
-      if (!_videoStarted) {
-        playerLayer = _posterOverlay(
-          hasThumbnail ? lesson.thumbnailUrl : null,
-          loading: false,
-          showPlayButton: true,
-          onPlayTap: () {
-            setState(() => _videoStarted = true);
-            _videoController!.play();
-          },
-        );
-      } else {
-        playerLayer = Stack(
-          fit: StackFit.expand,
-          children: [
-            FittedBox(
-              fit: BoxFit.contain,
-              child: SizedBox(
-                width: _videoController!.value.size.width,
-                height: _videoController!.value.size.height,
-                child: VideoPlayer(_videoController!),
-              ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black.withOpacity(0.6)],
-                  ),
-                ),
-                padding: const EdgeInsets.only(top: 30),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        _videoController!.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                        size: 32,
-                        color: Colors.white,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _videoController!.value.isPlaying ? _videoController!.pause() : _videoController!.play();
-                        });
-                      },
-                    ),
-                    Expanded(
-                      child: VideoProgressIndicator(
-                        _videoController!,
-                        allowScrubbing: true,
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
-                        colors: VideoProgressColors(
-                          playedColor: LmsColors.primary,
-                          bufferedColor: Colors.white24,
-                          backgroundColor: Colors.white12,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      }
-    }
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      height: 220,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: LmsColors.primary.withOpacity(0.14), blurRadius: 28, offset: const Offset(0, 12)),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: playerLayer,
-    );
-  }
-
-  Widget _posterOverlay(
-      String? thumbnailUrl, {
-        required bool loading,
-        bool dim = false,
-        bool showPlayButton = false,
-        VoidCallback? onPlayTap,
-      }) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (thumbnailUrl != null)
-          Image.network(
-            thumbnailUrl,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(color: Colors.black),
-          )
-        else
-          Container(color: Colors.black),
-        if (dim || loading || showPlayButton) Container(color: Colors.black.withOpacity(0.35)),
-        if (loading)
-          const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.4)),
-        if (showPlayButton)
-          Center(
-            child: GestureDetector(
-              onTap: onPlayTap,
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.92), shape: BoxShape.circle),
-                child: const Icon(Icons.play_arrow_rounded, color: LmsColors.primary, size: 34),
-              ),
-            ),
-          ),
-      ],
-    );
   }
 
   Widget _buildNoteViewer(LessonDetail lesson) {
@@ -1763,10 +1420,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
           );
         }
 
-        if (lesson.hasVideo) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _initVideo(lesson));
-        }
-
         return Scaffold(
           backgroundColor: Colors.white,
           appBar: AppBar(
@@ -1787,28 +1440,6 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildHero(lesson),
-
-                if (lesson.hasVideo)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: updateProvider.isDeleting
-                          ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: LmsColors.error),
-                      )
-                          : TextButton.icon(
-                        onPressed: () => _confirmDeleteVideo(context, lesson),
-                        icon: const Icon(Icons.delete_outline_rounded, size: 15, color: LmsColors.error),
-                        label: const Text('Remove video', style: TextStyle(color: LmsColors.error, fontSize: 12, fontWeight: FontWeight.w700)),
-                        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
-                      ),
-                    ),
-                  ),
-
                 _buildHeader(lesson),
                 _videoParts(lesson),
 
