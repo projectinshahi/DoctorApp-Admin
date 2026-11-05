@@ -106,6 +106,14 @@ class LessonVideo {
   /// open itself by default.
   final String accessType;
 
+  /// How many times students have started it. Read-only: the server counts
+  /// it, and it is never sent back on a save.
+  final int viewCount;
+
+  /// Whether students can see it, when the server says. Null means it never
+  /// told us, and the panel claims nothing.
+  final bool? isPublished;
+
   const LessonVideo({
     this.id,
     this.title,
@@ -116,6 +124,8 @@ class LessonVideo {
     this.durationSeconds,
     this.displayOrder = 0,
     this.accessType = 'premium',
+    this.viewCount = 0,
+    this.isPublished,
   });
 
   bool get isFree => accessType.toLowerCase() == 'free';
@@ -134,11 +144,17 @@ class LessonVideo {
         durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
         displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
         accessType: '${json['accessType'] ?? 'premium'}',
+        viewCount: (json['viewCount'] as num?)?.toInt() ?? 0,
+        isPublished: json.containsKey('isPublished')
+            ? json['isPublished'] == true
+            : (json['status'] is String
+                ? '${json['status']}'.toLowerCase() == 'published'
+                : null),
       );
 
-  /// What the save sends. `displayOrder` is left out on purpose: the server
-  /// numbers the rows from the array's own order, so reordering the list is
-  /// the whole of reordering.
+  /// What the save sends. `displayOrder` is left out on purpose - the server
+  /// numbers the rows from the array's own order - and so is `viewCount`,
+  /// which is the server's to count.
   Map<String, dynamic> toJson() => {
         'videoUrl': videoUrl,
         if (title != null) 'title': title,

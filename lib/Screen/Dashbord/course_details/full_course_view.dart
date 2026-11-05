@@ -766,6 +766,10 @@ class _LessonTimelineRowState extends State<_LessonTimelineRow> {
   static String _videoLabel(Lesson lesson) {
     final total = lesson.videoCount;
     final plural = '$total video${total == 1 ? '' : 's'}';
+    // Students only see published videos, so a lesson with drafts reads
+    // differently in the app than here. Said first: it explains the gap.
+    final draft = lesson.draftVideoCount;
+    if (draft != null && draft > 0) return '$plural · $draft draft';
     final free = lesson.freeVideoCount;
     if (free == null || total == 0) return plural;
     if (free == 0) return '$plural · all premium';

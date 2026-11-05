@@ -219,6 +219,11 @@ class Lesson {
   /// when it does not - a guess here would misstate what students can open.
   final int? freeVideoCount;
 
+  /// How many of those videos students cannot see yet, or null when the tree
+  /// said nothing about it. The app counts only published videos, so this is
+  /// what explains a lesson showing 8 here and 6 there.
+  final int? draftVideoCount;
+
   final int deckCount;
 
   Lesson({
@@ -237,6 +242,7 @@ class Lesson {
     this.videoKnown = false, // NEW
     this.videoCount = 0,
     this.freeVideoCount,
+    this.draftVideoCount,
     this.deckCount = 0,
     this.quizId,
     this.quizSubjectName,
@@ -286,6 +292,7 @@ class Lesson {
                 ? 1
                 : 0)),
     freeVideoCount: _freeVideos(json),
+    draftVideoCount: _draftVideos(json),
     deckCount: _count(json, "rapidRecalls") ?? 0,
     quizId: (json["quizId"] as num?)?.toInt(),
     quizSubjectName: _nestedName(json["quiz"], "subject"),
@@ -301,6 +308,22 @@ class Lesson {
         .whereType<Map>()
         .where((v) => '${v["accessType"] ?? "premium"}'.toLowerCase() == 'free')
         .length;
+  }
+
+  /// Unpublished videos, when the rows came with the tree and say so. Null
+  /// when they did not - the panel would rather say nothing than call a
+  /// video a draft on a guess.
+  static int? _draftVideos(Map<String, dynamic> json) {
+    final raw = json["videos"];
+    if (raw is! List) return null;
+    final rows = raw.whereType<Map>().toList();
+    final said = rows.where((v) =>
+        v.containsKey("isPublished") || v["status"] is String);
+    if (said.length != rows.length || rows.isEmpty) return null;
+    return rows.where((v) {
+      if (v.containsKey("isPublished")) return v["isPublished"] != true;
+      return '${v["status"]}'.toLowerCase() != 'published';
+    }).length;
   }
 
   /// One number out of Prisma's `_count` block, or null when the server did

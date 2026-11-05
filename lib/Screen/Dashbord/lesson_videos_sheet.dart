@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../services/question_image_service.dart';
 import '../../widget/video_access_switch.dart';
+import '../../widget/video_row_fields.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../provider/lesson_upload_provider.dart';
 
@@ -59,8 +60,14 @@ class _VideoRow {
   final TextEditingController description;
 
   /// The still students see before they press play. Uploaded here, so a part
-  /// can have its own rather than borrowing the lesson's cover.
+  /// can have its own rather than borrowing the lesson's icon.
   final TextEditingController thumbnail;
+
+  /// The link this row was loaded with, and how many students have watched
+  /// it. Both read-only: together they say whether changing the link throws
+  /// a view count away.
+  final String? savedUrl;
+  final int viewCount;
 
   /// Free parts are the sample a paid lesson sells itself with. New rows
   /// start premium: a video must never open itself by default.
@@ -76,6 +83,8 @@ class _VideoRow {
     String? url,
     String? description,
     String? thumbnail,
+    this.savedUrl,
+    this.viewCount = 0,
     this.videoPublicId,
     this.durationSeconds,
     this.free = false,
@@ -89,6 +98,8 @@ class _VideoRow {
         url: v.videoUrl,
         description: v.description,
         thumbnail: v.thumbnailUrl,
+        savedUrl: v.videoUrl,
+        viewCount: v.viewCount,
         videoPublicId: v.videoPublicId,
         durationSeconds: v.durationSeconds,
         free: v.isFree,
@@ -453,12 +464,17 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
                         style: const TextStyle(fontSize: 13),
                         decoration: _decoration('Paste the video link'),
                       ),
+                      if (_linkWarning(row) != null)
+                        VideoFieldNote(_linkWarning(row)!, warning: true),
                       const SizedBox(height: 8),
                       TextField(
                         controller: row.title,
+                        // Keeps the counter under it honest as it is typed.
+                        onChanged: (_) => setState(() {}),
                         style: const TextStyle(fontSize: 13),
                         decoration: _decoration('Title (optional)'),
                       ),
+                      _titleNote(row),
                       const SizedBox(height: 8),
                       TextField(
                         controller: row.description,
@@ -469,56 +485,14 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
                             _decoration('Description (optional)'),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: row.thumbnail,
-                              style: const TextStyle(fontSize: 13),
-                              decoration: _decoration(
-                                  'Thumbnail link, or upload one'),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          _uploadingThumbAt == index
-                              ? const Padding(
-                                  padding: EdgeInsets.all(10),
-                                  child: SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  ),
-                                )
-                              : IconButton(
-                                  tooltip: 'Upload a thumbnail',
-                                  onPressed: _isSaving
-                                      ? null
-                                      : () => _pickThumbnail(index),
-                                  icon: const Icon(
-                                      Icons.add_photo_alternate_outlined,
-                                      size: 19,
-                                      color: LmsColors.primary),
-                                ),
-                        ],
+                      VideoThumbnailField(
+                        controller: row.thumbnail,
+                        uploading: _uploadingThumbAt == index,
+                        enabled: !_isSaving,
+                        onUpload: () => _pickThumbnail(index),
+                        onChanged: () => setState(() {}),
+                        decoration: _decoration,
                       ),
-                      if (row.thumbnail.text.trim().isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            row.thumbnail.text.trim(),
-                            height: 70,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            // Through an <img> element, so a host with no
-                            // CORS headers still shows the picture.
-                            webHtmlElementStrategy:
-                                WebHtmlElementStrategy.prefer,
-                            errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
           ),
@@ -526,6 +500,25 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
       ),
     );
   }
+
+  /// The counter under a video title, warning once the app's two lines run
+  /// out.
+  Widget _titleNote(_VideoRow row) {
+    final text = row.title.text.trim();
+    final warning = videoTitleWarning(text);
+    return VideoFieldNote(
+      warning == null
+          ? '${text.characters.length}/$kVideoTitleSoftLimit'
+          : '${text.characters.length}/$kVideoTitleSoftLimit - $warning',
+      warning: warning != null,
+    );
+  }
+
+  String? _linkWarning(_VideoRow row) => videoLinkChangeWarning(
+        savedUrl: row.savedUrl,
+        currentUrl: row.url.text,
+        viewCount: row.viewCount,
+      );
 
   InputDecoration _decoration(String hint) => InputDecoration(
         hintText: hint,

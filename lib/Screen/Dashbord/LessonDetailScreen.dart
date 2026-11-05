@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/format/view_count.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../provider/lesson_details_provider.dart';
@@ -361,7 +362,11 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                       const SizedBox(width: 6),
                       Text(
                         'Part ${index + 1}'
-                        '${video.lengthLabel == null ? '' : ' · ${video.lengthLabel}'}',
+                        '${video.lengthLabel == null ? '' : ' · ${video.lengthLabel}'}'
+                        // What the app shows beside the title. Nothing at
+                        // zero: "0 views" on a video published today reads
+                        // as a failure rather than as a new video.
+                        '${video.viewCount > 0 ? ' · ${formatViewCount(video.viewCount)} views' : ''}',
                         style: const TextStyle(
                             fontSize: 11, color: LmsColors.textGrey),
                       ),

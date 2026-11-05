@@ -10,17 +10,20 @@ import '../../services/lesson_upload_service.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../models/quiz_model.dart';
 import '../../services/quiz_service.dart';
+import '../../services/question_image_service.dart';
 import '../../services/sheet_question_sync_service.dart';
 import '../../widget/sheet_quiz_picker.dart';
 import '../../widget/video_access_switch.dart';
+import '../../widget/video_row_fields.dart';
 import 'lesson_badges.dart'; // LessonBadge, reused for the deck chips
 
 /// A media slot on the lesson sheet, in one of four states: waiting for a
 /// file, uploading, attached, or failed.
 ///
-/// An image ([previewImage]) is shown large and cropped the way the lesson
-/// card crops it, so a wrong or badly framed cover is caught here rather than
-/// after publishing. Anything else - the video - is a row naming the file.
+/// An image ([previewImage]) is shown cropped the way the app crops it - a
+/// circle when [roundPreview], a wide band otherwise - so a wrong or badly
+/// framed picture is caught here rather than after publishing. Anything else
+/// - the video - is a row naming the file.
 class _UploadTile extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -38,6 +41,9 @@ class _UploadTile extends StatelessWidget {
   final VoidCallback onRemove;
   final Widget? previewImage;
 
+  /// Preview the image as a circle, because that is how the app shows it.
+  final bool roundPreview;
+
   const _UploadTile({
     required this.icon,
     required this.color,
@@ -51,6 +57,7 @@ class _UploadTile extends StatelessWidget {
     required this.onRetry,
     required this.onRemove,
     this.previewImage,
+    this.roundPreview = false,
   });
 
   Widget _frame({required Color tint, required Widget child}) => Container(
@@ -156,10 +163,30 @@ class _UploadTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SizedBox(
-              height: 200,
-              child: ColoredBox(color: LmsColors.bg, child: previewImage),
-            ),
+            if (roundPreview)
+              ColoredBox(
+                color: LmsColors.bg,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Center(
+                    child: Container(
+                      width: 128,
+                      height: 128,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: previewImage,
+                    ),
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: 200,
+                child: ColoredBox(color: LmsColors.bg, child: previewImage),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
               child: Row(
@@ -488,9 +515,15 @@ class _VideoDraft {
   /// the lesson's own access covers its quiz and notes, not this.
   bool free;
 
-  /// Carried through rather than edited here - the Add video sheet uploads
-  /// stills, and dropping one on a title edit would be a silent deletion.
-  final String? thumbnailUrl;
+  /// The still students see before they press play, uploaded here as well as
+  /// in the Add video sheet - it is the biggest thing on the app's row.
+  final TextEditingController thumbnail;
+
+  /// The link this row was loaded with, and how many students have watched
+  /// it. Read-only, and together they say whether changing the link throws a
+  /// view count away.
+  final String? savedUrl;
+  final int viewCount;
 
   /// Carried through untouched so re-saving a lesson does not orphan an
   /// uploaded video on Cloudinary, or lose a length the server already knows.
@@ -501,19 +534,24 @@ class _VideoDraft {
     String? title,
     String? url,
     String? description,
-    this.thumbnailUrl,
+    String? thumbnailUrl,
+    this.savedUrl,
+    this.viewCount = 0,
     this.videoPublicId,
     this.durationSeconds,
     this.free = false,
   })  : title = TextEditingController(text: title ?? ''),
         url = TextEditingController(text: url ?? ''),
-        description = TextEditingController(text: description ?? '');
+        description = TextEditingController(text: description ?? ''),
+        thumbnail = TextEditingController(text: thumbnailUrl ?? '');
 
   factory _VideoDraft.from(LessonVideo v) => _VideoDraft(
         title: v.title,
         url: v.videoUrl,
         description: v.description,
         thumbnailUrl: v.thumbnailUrl,
+        savedUrl: v.videoUrl,
+        viewCount: v.viewCount,
         videoPublicId: v.videoPublicId,
         durationSeconds: v.durationSeconds,
         free: v.isFree,
@@ -532,8 +570,8 @@ class _VideoDraft {
       'videoUrl': link,
       if (name.isNotEmpty) 'title': name,
       if (blurb.isNotEmpty) 'description': blurb,
-      if (thumbnailUrl != null && thumbnailUrl!.isNotEmpty)
-        'thumbnailUrl': thumbnailUrl,
+      if (thumbnail.text.trim().isNotEmpty)
+        'thumbnailUrl': thumbnail.text.trim(),
       // Always sent. A row without it takes the server's default, and an edit
       // about a title could then open a paid video.
       'accessType': free ? 'free' : 'premium',
@@ -547,6 +585,7 @@ class _VideoDraft {
     title.dispose();
     url.dispose();
     description.dispose();
+    thumbnail.dispose();
   }
 }
 
@@ -780,6 +819,35 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   void _removeVideo(int index) {
     setState(() => _videos.removeAt(index).dispose());
   }
+
+  /// Which video row's thumbnail is uploading, so only that one waits.
+  int? _uploadingVideoThumbAt;
+
+  Future<void> _pickVideoThumbnail(int index) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: QuestionImageService.allowedExtensions,
+      withData: true, // web has no file path to read from
+    );
+    final file = picked?.files.single;
+    if (file == null || file.bytes == null) return;
+
+    setState(() => _uploadingVideoThumbAt = index);
+    final result = await QuestionImageService()
+        .upload(bytes: file.bytes!, filename: file.name);
+
+    if (!mounted) return;
+    setState(() {
+      _uploadingVideoThumbAt = null;
+      if (result.isSuccess) {
+        _videos[index].thumbnail.text = result.image!.url;
+      } else {
+        _videoThumbError = result.errorMessage;
+      }
+    });
+  }
+
+  String? _videoThumbError;
 
   /// Up and down rather than drag: the sheet is already a scroll view, and a
   /// reorderable list inside one is a fight over the same gesture.
@@ -1133,9 +1201,12 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
           const SizedBox(height: 8),
           TextFormField(
             controller: draft.title,
+            // Keeps the counter under it honest as it is typed.
+            onChanged: (_) => setState(() {}),
             decoration: _inputDecoration('Title · optional, e.g. "Part 1"'),
             style: const TextStyle(fontSize: 13.5),
           ),
+          _titleNote(draft),
           const SizedBox(height: 8),
           TextFormField(
             controller: draft.url,
@@ -1145,6 +1216,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
               icon: Icons.link_rounded,
             ),
             style: const TextStyle(fontSize: 13.5),
+            onChanged: (_) => setState(() {}),
             validator: (value) {
               final v = value?.trim() ?? '';
               // A row left completely blank is dropped on save, so it is not
@@ -1161,6 +1233,8 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
               return null;
             },
           ),
+          if (_linkWarning(draft) != null)
+            VideoFieldNote(_linkWarning(draft)!, warning: true),
           const SizedBox(height: 8),
           TextFormField(
             controller: draft.description,
@@ -1169,10 +1243,40 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
             decoration: _inputDecoration('Description · optional'),
             style: const TextStyle(fontSize: 13.5),
           ),
+          const SizedBox(height: 10),
+          VideoThumbnailField(
+            controller: draft.thumbnail,
+            uploading: _uploadingVideoThumbAt == index,
+            enabled: !_isCreatingQuiz,
+            onUpload: () => _pickVideoThumbnail(index),
+            onChanged: () => setState(() {}),
+            decoration: (hint) => _inputDecoration(hint),
+          ),
+          if (_videoThumbError != null)
+            VideoFieldNote(_videoThumbError!, warning: true),
         ],
       ),
     );
   }
+
+  /// The counter under a video title, warning once the app's two lines run
+  /// out.
+  Widget _titleNote(_VideoDraft draft) {
+    final text = draft.title.text.trim();
+    final warning = videoTitleWarning(text);
+    return VideoFieldNote(
+      warning == null
+          ? '${text.characters.length}/$kVideoTitleSoftLimit'
+          : '${text.characters.length}/$kVideoTitleSoftLimit - $warning',
+      warning: warning != null,
+    );
+  }
+
+  String? _linkWarning(_VideoDraft draft) => videoLinkChangeWarning(
+        savedUrl: draft.savedUrl,
+        currentUrl: draft.url.text,
+        viewCount: draft.viewCount,
+      );
 
   InputDecoration _inputDecoration(String hint, {IconData? icon}) {
     return InputDecoration(
@@ -1388,17 +1492,17 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 ],
 
                 // Not on a quiz lesson. What a quiz serves is its questions;
-                // a cover image and a video link in the same form are two
+                // an icon and a video link in the same form are two
                 // more fields to scroll past and leave empty.
                 if (!_isQuiz) ...[
                 // The chips above end flush; without this the next label sat
                 // right against them.
                 const SizedBox(height: 18),
-                const _FieldLabel('Cover image (optional)'),
+                const _FieldLabel('Icon (shown on the subject card)'),
                 const SizedBox(height: 2),
                 const Text(
-                  'Shown on the lesson card students tap. A wide 16:9 image '
-                  'looks best.',
+                  'Square, simple icon on a transparent or white background, '
+                  'at least 256x256. Shown in a circle.',
                   style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
                 ),
                 const SizedBox(height: 8),
@@ -1408,13 +1512,14 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   isUploading: _isUploadingThumbnail,
                   hasFile: _thumbnailUrl != null,
                   fileLabel: _pickedThumbnailName ??
-                      (_thumbnailUrl != null ? 'Current cover image' : null),
-                  title: 'Add a cover image',
-                  subtitle: 'JPG, PNG or WebP',
+                      (_thumbnailUrl != null ? 'Current icon' : null),
+                  title: 'Add an icon',
+                  subtitle: 'Square JPG, PNG or WebP',
                   errorMessage: _thumbnailUploadError,
                   onPick: _pickThumbnail,
                   onRetry: _pickThumbnail,
                   onRemove: _removeThumbnail,
+                  roundPreview: true,
                   previewImage: _thumbnailUrl != null
                       ? Image.network(
                           _thumbnailUrl!,

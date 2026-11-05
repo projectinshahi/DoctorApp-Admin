@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
+import '../../core/format/view_count.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../provider/lesson_upload_provider.dart';
@@ -296,6 +297,13 @@ class _LessonVideoPlayerScreenState extends State<LessonVideoPlayerScreen> {
                               style: const TextStyle(
                                   fontSize: 12, color: LmsColors.textGrey)),
                         ],
+                        if (_video.viewCount > 0) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                              '${formatViewCount(_video.viewCount)} views',
+                              style: const TextStyle(
+                                  fontSize: 12, color: LmsColors.textGrey)),
+                        ],
                         const Spacer(),
                         TextButton.icon(
                           onPressed: () {
@@ -489,7 +497,8 @@ class _LessonVideoPlayerScreenState extends State<LessonVideoPlayerScreen> {
                           fontSize: 12.5, fontWeight: FontWeight.w600)),
                   Text(
                     '${video.isFree ? 'Free' : 'Premium'}'
-                    '${video.lengthLabel == null ? '' : ' · ${video.lengthLabel}'}',
+                    '${video.lengthLabel == null ? '' : ' · ${video.lengthLabel}'}'
+                    '${video.viewCount > 0 ? ' · ${formatViewCount(video.viewCount)} views' : ''}',
                     style: const TextStyle(
                         fontSize: 11, color: LmsColors.textGrey),
                   ),
