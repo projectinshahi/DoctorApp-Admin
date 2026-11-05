@@ -101,7 +101,7 @@ void main() {
       expect(lesson.draftVideoCount, 1);
     });
 
-    test('claims nothing when the rows are silent about it', () {
+    test('a row that says nothing is published, as the server has it', () {
       final lesson = tree.Lesson.fromJson({
         'id': 1,
         'title': 'Pituitary Gland',
@@ -110,6 +110,17 @@ void main() {
           {'videoUrl': 'https://cdn/one.mp4'},
           {'videoUrl': 'https://cdn/two.mp4', 'status': 'draft'},
         ],
+      });
+
+      expect(lesson.draftVideoCount, 1);
+    });
+
+    test('claims nothing when the tree sent counts only', () {
+      final lesson = tree.Lesson.fromJson({
+        'id': 1,
+        'title': 'Pituitary Gland',
+        'type': 'video',
+        '_count': {'videos': 3},
       });
 
       expect(lesson.draftVideoCount, isNull);

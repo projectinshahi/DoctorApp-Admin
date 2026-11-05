@@ -15,6 +15,7 @@ import '../../services/sheet_question_sync_service.dart';
 import '../../widget/sheet_quiz_picker.dart';
 import '../../widget/video_access_switch.dart';
 import '../../widget/video_row_fields.dart';
+import '../../widget/video_status_switch.dart';
 import 'lesson_badges.dart'; // LessonBadge, reused for the deck chips
 
 /// A media slot on the lesson sheet, in one of four states: waiting for a
@@ -515,6 +516,10 @@ class _VideoDraft {
   /// the lesson's own access covers its quiz and notes, not this.
   bool free;
 
+  /// Draft parts are saved but unseen. The lesson's status comes first: a
+  /// draft lesson drafts all of them.
+  bool published;
+
   /// The still students see before they press play, uploaded here as well as
   /// in the Add video sheet - it is the biggest thing on the app's row.
   final TextEditingController thumbnail;
@@ -540,6 +545,7 @@ class _VideoDraft {
     this.videoPublicId,
     this.durationSeconds,
     this.free = false,
+    this.published = true,
   })  : title = TextEditingController(text: title ?? ''),
         url = TextEditingController(text: url ?? ''),
         description = TextEditingController(text: description ?? ''),
@@ -555,6 +561,7 @@ class _VideoDraft {
         videoPublicId: v.videoPublicId,
         durationSeconds: v.durationSeconds,
         free: v.isFree,
+        published: v.isPublished,
       );
 
   bool get isEmpty => url.text.trim().isEmpty && title.text.trim().isEmpty;
@@ -575,6 +582,9 @@ class _VideoDraft {
       // Always sent. A row without it takes the server's default, and an edit
       // about a title could then open a paid video.
       'accessType': free ? 'free' : 'premium',
+      // The lesson's status overrules this server-side; sending it is how a
+      // published lesson keeps one part back.
+      'status': published ? 'published' : 'draft',
       // Only meaningful while the link is the one it was uploaded for.
       if (videoPublicId != null && videoPublicId!.isNotEmpty) 'videoPublicId': videoPublicId,
       if (durationSeconds != null) 'durationSeconds': durationSeconds,
@@ -811,10 +821,61 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
     await delete(publicId: publicId);
   }
 
+  bool get _lessonPublished => _status == LessonStatus.published;
+
   void _addVideo() => setState(() => _videos.add(_VideoDraft(
         free: VideoAccessSwitch.defaultFree(
             coursePremium: widget.coursePremium ?? false),
+        published: VideoStatusSwitch.defaultPublished(
+            lessonPublished: _lessonPublished),
       )));
+
+  /// Changing the lesson's status carries every video with it, so it is
+  /// asked about rather than discovered after saving.
+  Future<void> _changeStatus(LessonStatus next) async {
+    if (next == _status) return;
+    final count = _videos.where((v) => !v.isEmpty).length;
+    final publishing = next == LessonStatus.published;
+
+    if (count > 0 && publishing != _lessonPublished) {
+      final plural = '$count video${count == 1 ? '' : 's'}';
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(publishing
+              ? 'Publish this lesson?'
+              : next == LessonStatus.archived
+                  ? 'Archive this lesson?'
+                  : 'Move this lesson to draft?'),
+          content: Text(
+            publishing
+                ? 'All $plural in it will be published.'
+                : 'All $plural in it will become drafts and students '
+                    "won't see them.",
+            style: const TextStyle(fontSize: 13.5, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(publishing ? 'Publish' : 'Continue')),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+
+    setState(() {
+      _status = next;
+      for (final video in _videos) {
+        video.published = publishing;
+      }
+    });
+  }
 
   void _removeVideo(int index) {
     setState(() => _videos.removeAt(index).dispose());
@@ -1192,11 +1253,24 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
             ],
           ),
           const SizedBox(height: 6),
-          VideoAccessSwitch(
-            free: draft.free,
-            coursePremium: widget.coursePremium ?? false,
-            enabled: !_isCreatingQuiz,
-            onChanged: (free) => setState(() => draft.free = free),
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            children: [
+              VideoAccessSwitch(
+                free: draft.free,
+                coursePremium: widget.coursePremium ?? false,
+                enabled: !_isCreatingQuiz,
+                onChanged: (free) => setState(() => draft.free = free),
+              ),
+              VideoStatusSwitch(
+                published: draft.published,
+                lockedByLesson: !_lessonPublished,
+                enabled: !_isCreatingQuiz,
+                onChanged: (published) =>
+                    setState(() => draft.published = published),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           TextFormField(
@@ -1363,7 +1437,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                     return ChoiceChip(
                       label: Text(s.apiValue.toUpperCase()),
                       selected: isSelected,
-                      onSelected: (_) => setState(() => _status = s),
+                      onSelected: (_) => _changeStatus(s),
                       labelStyle: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -1560,6 +1634,11 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   'order students get.',
                   style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
                 ),
+                if (!_lessonPublished)
+                  const VideoFieldNote(
+                    'All videos are drafts while the lesson is.',
+                    warning: true,
+                  ),
                 const SizedBox(height: 8),
                 if (_videos.isEmpty)
                   Container(

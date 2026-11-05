@@ -180,6 +180,65 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
         .loadLesson(lesson.id, includeChapter: true);
   }
 
+  /// Which row's status is saving, so only that pill waits.
+  int? _savingStatusAt;
+
+  /// Publish or draft one part, and save it at once.
+  ///
+  /// The lesson's status comes first: on a draft lesson the server drafts
+  /// every video whatever this sends, so it says so instead of asking.
+  Future<void> _togglePublished(LessonDetail lesson, int index) async {
+    if (lesson.status != 'published') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This lesson is a draft. Publish the lesson to '
+              'publish its videos.'),
+        ),
+      );
+      return;
+    }
+
+    final videos = _videosOf(lesson);
+    final publishing = !videos[index].isPublished;
+
+    setState(() => _savingStatusAt = index);
+
+    final payload = [
+      for (var i = 0; i < videos.length; i++)
+        {
+          ...videos[i].toJson(),
+          'status': i == index
+              ? (publishing ? 'published' : 'draft')
+              : videos[i].status,
+        }
+    ];
+
+    final provider = LessonUpdateProvider();
+    final ok = await provider.updateLesson(
+      chapterId: lesson.chapterId,
+      lessonId: lesson.id,
+      videos: payload,
+    );
+
+    if (!mounted) return;
+    setState(() => _savingStatusAt = null);
+
+    if (!ok) {
+      // The pill never moved - the row still shows what the server holds.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: LmsColors.error,
+          content: Text(provider.errorMessage ?? 'That did not save'),
+        ),
+      );
+      return;
+    }
+
+    await context
+        .read<LessonDetailsProvider>()
+        .loadLesson(lesson.id, includeChapter: true);
+  }
+
   /// The lesson's videos: how many, which tier, one card each.
   ///
   /// Nothing plays here. A part opens on its own screen, where it can be
@@ -289,6 +348,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
           lessonTitle: lesson.title,
           videos: _videosOf(lesson),
           initialIndex: index,
+          lessonPublished: lesson.status == 'published',
         ),
       ),
     );
@@ -303,8 +363,12 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
     final title = (video.title ?? '').trim();
     final still = (video.thumbnailUrl ?? '').trim();
 
-    return InkWell(
-      onTap: () => _openPlayer(lesson, index),
+    // A draft row is faded the way it is missing from the app. The pills stay
+    // readable - they are what the admin came here to change.
+    return Opacity(
+      opacity: video.isPublished ? 1 : 0.62,
+      child: InkWell(
+        onTap: () => _openPlayer(lesson, index),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         child: Row(
@@ -356,10 +420,13 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                         color: LmsColors.textDark),
                   ),
                   const SizedBox(height: 5),
-                  Row(
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       _accessPill(lesson, video, index),
-                      const SizedBox(width: 6),
+                      _statusPill(lesson, video, index),
                       Text(
                         'Part ${index + 1}'
                         '${video.lengthLabel == null ? '' : ' · ${video.lengthLabel}'}'
@@ -372,6 +439,14 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                       ),
                     ],
                   ),
+                  if (!video.isPublished) ...[
+                    const SizedBox(height: 4),
+                    const Text("Draft — students can't see this",
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: LmsColors.textGrey)),
+                  ],
                   if ((video.description ?? '').trim().isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Text(
@@ -393,6 +468,7 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                   size: 18, color: LmsColors.textGrey),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -439,6 +515,57 @@ class _LessonDetailBodyState extends State<_LessonDetailBody> {
                     color: colour),
               const SizedBox(width: 3),
               Text(free ? 'Free' : 'Premium',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: colour)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Published or draft for this part, and the control that changes it.
+  Widget _statusPill(LessonDetail lesson, LessonVideo video, int index) {
+    final lessonDraft = lesson.status != 'published';
+    final published = video.isPublished && !lessonDraft;
+    final colour = published ? LmsColors.success : LmsColors.textGrey;
+    final saving = _savingStatusAt == index;
+
+    return Tooltip(
+      message: lessonDraft
+          ? 'The lesson is a draft, so its videos are too'
+          : (published ? 'Tap to make it a draft' : 'Tap to publish it'),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: saving ? null : () => _togglePublished(lesson, index),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: colour.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: colour.withOpacity(0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (saving)
+                SizedBox(
+                  width: 11,
+                  height: 11,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 1.6, color: colour),
+                )
+              else
+                Icon(
+                    published
+                        ? Icons.visibility_outlined
+                        : Icons.edit_note_rounded,
+                    size: 11,
+                    color: colour),
+              const SizedBox(width: 3),
+              Text(published ? 'Published' : 'Draft',
                   style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,

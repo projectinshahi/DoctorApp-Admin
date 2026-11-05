@@ -24,6 +24,10 @@ class LessonVideoPlayerScreen extends StatefulWidget {
   final int initialIndex;
   final bool coursePremium;
 
+  /// Whether the lesson is published. A draft lesson drafts its videos, so
+  /// the sheet opened from here has to say so too.
+  final bool lessonPublished;
+
   const LessonVideoPlayerScreen({
     super.key,
     required this.lessonId,
@@ -32,6 +36,7 @@ class LessonVideoPlayerScreen extends StatefulWidget {
     required this.videos,
     required this.initialIndex,
     this.coursePremium = false,
+    this.lessonPublished = true,
   });
 
   @override
@@ -230,6 +235,7 @@ class _LessonVideoPlayerScreenState extends State<LessonVideoPlayerScreen> {
       lessonTitle: widget.lessonTitle,
       initialVideos: _videos,
       coursePremium: widget.coursePremium,
+      lessonPublished: widget.lessonPublished,
     );
     if (saved != true || !mounted) return;
     // The list may have changed under this screen - order, titles, even the

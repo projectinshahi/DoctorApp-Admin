@@ -5,6 +5,7 @@ import '../../core/theam/theam_dart.dart';
 import '../../services/question_image_service.dart';
 import '../../widget/video_access_switch.dart';
 import '../../widget/video_row_fields.dart';
+import '../../widget/video_status_switch.dart';
 import '../../models/lesson_detail_model.dart';
 import '../../provider/lesson_upload_provider.dart';
 
@@ -20,6 +21,10 @@ Future<bool?> showLessonVideosSheet(
   required String lessonTitle,
   List<LessonVideo> initialVideos = const [],
   bool coursePremium = false,
+
+  /// Whether the lesson itself is published. A draft lesson drafts every
+  /// video in it, so the rows say so instead of promising otherwise.
+  bool lessonPublished = true,
 }) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -31,6 +36,7 @@ Future<bool?> showLessonVideosSheet(
       lessonTitle: lessonTitle,
       initialVideos: initialVideos,
       coursePremium: coursePremium,
+      lessonPublished: lessonPublished,
     ),
   );
 }
@@ -41,6 +47,7 @@ class _LessonVideosSheet extends StatefulWidget {
   final String lessonTitle;
   final List<LessonVideo> initialVideos;
   final bool coursePremium;
+  final bool lessonPublished;
 
   const _LessonVideosSheet({
     required this.chapterId,
@@ -48,6 +55,7 @@ class _LessonVideosSheet extends StatefulWidget {
     required this.lessonTitle,
     required this.initialVideos,
     required this.coursePremium,
+    required this.lessonPublished,
   });
 
   @override
@@ -73,6 +81,9 @@ class _VideoRow {
   /// start premium: a video must never open itself by default.
   bool free;
 
+  /// Draft parts are saved but unseen. A new row follows the lesson.
+  bool published;
+
   /// Carried through untouched: re-saving must not orphan a video that was
   /// uploaded rather than linked, or lose a length the server already knows.
   final String? videoPublicId;
@@ -88,6 +99,7 @@ class _VideoRow {
     this.videoPublicId,
     this.durationSeconds,
     this.free = false,
+    this.published = true,
   })  : title = TextEditingController(text: title ?? ''),
         url = TextEditingController(text: url ?? ''),
         description = TextEditingController(text: description ?? ''),
@@ -103,6 +115,7 @@ class _VideoRow {
         videoPublicId: v.videoPublicId,
         durationSeconds: v.durationSeconds,
         free: v.isFree,
+        published: v.isPublished,
       );
 
   /// Null for a row with no link. A row someone added and left alone is
@@ -122,6 +135,7 @@ class _VideoRow {
         'videoPublicId': videoPublicId,
       if (durationSeconds != null) 'durationSeconds': durationSeconds,
       'accessType': free ? 'free' : 'premium',
+      'status': published ? 'published' : 'draft',
     };
   }
 
@@ -187,6 +201,8 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
         title: 'Part ${_rows.length + 1}',
         free: VideoAccessSwitch.defaultFree(
             coursePremium: widget.coursePremium),
+        published: VideoStatusSwitch.defaultPublished(
+            lessonPublished: widget.lessonPublished),
       );
 
   void _add() => setState(() => _rows.add(_newRow()));
@@ -308,6 +324,14 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
               'order here is the order students get.',
               style: TextStyle(fontSize: 11.5, color: LmsColors.textGrey),
             ),
+            if (!widget.lessonPublished) ...[
+              const SizedBox(height: 8),
+              const VideoFieldNote(
+                'This lesson is a draft, so every video saved here is a '
+                'draft too. Publish the lesson to publish its videos.',
+                warning: true,
+              ),
+            ],
             const SizedBox(height: 14),
 
             Flexible(
@@ -443,11 +467,24 @@ class _LessonVideosSheetState extends State<_LessonVideosSheet> {
           ),
           Padding(
             padding: const EdgeInsets.only(right: 6, bottom: 8),
-            child: VideoAccessSwitch(
-              free: row.free,
-              coursePremium: widget.coursePremium,
-              enabled: !_isSaving,
-              onChanged: (free) => setState(() => row.free = free),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 6,
+              children: [
+                VideoAccessSwitch(
+                  free: row.free,
+                  coursePremium: widget.coursePremium,
+                  enabled: !_isSaving,
+                  onChanged: (free) => setState(() => row.free = free),
+                ),
+                VideoStatusSwitch(
+                  published: row.published,
+                  lockedByLesson: !widget.lessonPublished,
+                  enabled: !_isSaving,
+                  onChanged: (published) =>
+                      setState(() => row.published = published),
+                ),
+              ],
             ),
           ),
           Padding(

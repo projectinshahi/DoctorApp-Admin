@@ -47,9 +47,13 @@ void main() {
         'videoPublicId': 'lesson_videos/abc',
         'durationSeconds': 610,
         'accessType': 'premium',
+        'status': 'published',
       });
-      expect(lesson.videos.last.toJson(),
-          {'videoUrl': 'https://cdn/two.mp4', 'accessType': 'premium'});
+      expect(lesson.videos.last.toJson(), {
+        'videoUrl': 'https://cdn/two.mp4',
+        'accessType': 'premium',
+        'status': 'published',
+      });
     });
 
     test('a response from before the feature still shows its one video', () {

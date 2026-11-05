@@ -261,6 +261,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       lessonTitle: full.title,
       initialVideos: full.videos,
       coursePremium: _coursePremium ?? false,
+      lessonPublished: full.status == 'published',
     );
     if (saved != true || !mounted) return;
     _showSnack('Videos saved');

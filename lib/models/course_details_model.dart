@@ -316,14 +316,10 @@ class Lesson {
   static int? _draftVideos(Map<String, dynamic> json) {
     final raw = json["videos"];
     if (raw is! List) return null;
-    final rows = raw.whereType<Map>().toList();
-    final said = rows.where((v) =>
-        v.containsKey("isPublished") || v["status"] is String);
-    if (said.length != rows.length || rows.isEmpty) return null;
-    return rows.where((v) {
-      if (v.containsKey("isPublished")) return v["isPublished"] != true;
-      return '${v["status"]}'.toLowerCase() != 'published';
-    }).length;
+    return raw
+        .whereType<Map>()
+        .where((v) => '${v["status"] ?? "published"}'.toLowerCase() == 'draft')
+        .length;
   }
 
   /// One number out of Prisma's `_count` block, or null when the server did

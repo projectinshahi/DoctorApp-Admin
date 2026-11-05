@@ -110,9 +110,10 @@ class LessonVideo {
   /// it, and it is never sent back on a save.
   final int viewCount;
 
-  /// Whether students can see it, when the server says. Null means it never
-  /// told us, and the panel claims nothing.
-  final bool? isPublished;
+  /// `draft` | `published`, per video - published when the server says
+  /// nothing. The lesson's status wins: the server drafts every video of a
+  /// draft lesson whatever the rows ask for.
+  final String status;
 
   const LessonVideo({
     this.id,
@@ -125,8 +126,12 @@ class LessonVideo {
     this.displayOrder = 0,
     this.accessType = 'premium',
     this.viewCount = 0,
-    this.isPublished,
+    this.status = 'published',
   });
+
+  /// Whether students can see this part at all. Separate from [isFree],
+  /// which is about paying rather than seeing.
+  bool get isPublished => status != 'draft';
 
   bool get isFree => accessType.toLowerCase() == 'free';
 
@@ -145,11 +150,7 @@ class LessonVideo {
         displayOrder: (json['displayOrder'] as num?)?.toInt() ?? 0,
         accessType: '${json['accessType'] ?? 'premium'}',
         viewCount: (json['viewCount'] as num?)?.toInt() ?? 0,
-        isPublished: json.containsKey('isPublished')
-            ? json['isPublished'] == true
-            : (json['status'] is String
-                ? '${json['status']}'.toLowerCase() == 'published'
-                : null),
+        status: '${json['status'] ?? 'published'}'.toLowerCase(),
       );
 
   /// What the save sends. `displayOrder` is left out on purpose - the server
@@ -163,6 +164,7 @@ class LessonVideo {
         if (description != null) 'description': description,
         if (durationSeconds != null) 'durationSeconds': durationSeconds,
         'accessType': accessType,
+        'status': status,
       };
 
   /// "10:10", or null when the server never learned the length — a pasted
