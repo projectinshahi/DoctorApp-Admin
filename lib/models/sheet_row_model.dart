@@ -39,6 +39,10 @@ class SheetQuestion {
   /// 1-based, matching the sheet's `correct_option` column.
   final int correctOption;
 
+  /// The line this came from in the file, counting the header as line 1, so
+  /// a complaint about it names the line the admin can go and look at.
+  final int sourceRow;
+
   const SheetQuestion({
     required this.questionText,
     required this.options,
@@ -47,6 +51,7 @@ class SheetQuestion {
     this.questionImageUrl,
     this.difficulty = '',
     this.status = 'active',
+    this.sourceRow = 0,
     this.tags = const [],
     this.marksCorrect = '',
     this.marksIncorrect = '',

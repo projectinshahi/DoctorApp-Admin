@@ -76,7 +76,8 @@ class SheetCsvService {
 
     final questions = <SheetQuestion>[];
 
-    for (final row in rows) {
+    for (var index = 0; index < rows.length; index++) {
+      final row = rows[index];
       String cell(String column) => (row[column] ?? '').toString().trim();
 
       final text = cell('question_text');
@@ -109,10 +110,30 @@ class SheetCsvService {
             : tagsRaw.split(',').map((t) => t.trim()).where((t) => t.isNotEmpty).toList(),
         options: options,
         optionImageUrls: optionImages,
-        correctOption: int.tryParse(cell('correct_option')) ?? 0,
+        correctOption: readCorrectOption(cell('correct_option')),
+        // +2: the header is line 1 and spreadsheets count from 1.
+        sourceRow: index + 2,
       ));
     }
 
     return questions;
   }
+}
+
+/// The answer column, as a number or as the letter a paper writes it with.
+///
+/// "3" and "C" mean the same option; a sheet written for a printed exam uses
+/// the letter, and refusing it would be refusing the admin's own file.
+/// 0 means it says neither, which the caller reports as a bad row.
+int readCorrectOption(String raw) {
+  final value = raw.trim();
+  if (value.isEmpty) return 0;
+
+  final number = int.tryParse(value);
+  if (number != null) return number;
+
+  if (value.length != 1) return 0;
+  final letter = value.toUpperCase().codeUnitAt(0);
+  const a = 65; // 'A'
+  return letter >= a && letter <= a + 5 ? letter - a + 1 : 0;
 }

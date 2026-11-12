@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import '../../core/const/responsive_const.dart';
 import '../../core/theam/theam_dart.dart';
 import '../../provider/admin_student_provider.dart';
-import '../QuestionBank/course_quiz_screen.dart';
+import '../QuestionBank/question_bank_screen.dart';
 import '../../provider/course_get_provider.dart';
 import 'course_list_screen.dart';
 import 'dashboard_overview.dart';
@@ -301,7 +301,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       case "Question Bank":
         return ChangeNotifierProvider(
           create: (_) => CourseListGetProvider(),
-          child: const CourseQuizScreen(),
+          child: const QuestionBankScreen(),
         );
       case "Comments":
         return const CommentModerationScreen();
