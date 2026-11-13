@@ -66,14 +66,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
 
-  /// Only for files whose rows do not carry a subject and topic of their
-  /// own. A file that says is never asked.
-  List<Subject> _subjects = const [];
-  List<Topic> _topics = const [];
-  int? _fallbackSubjectId;
-  int? _fallbackTopicId;
-  bool _loadingScope = false;
-
   int? _courseId;
   List<CourseTypeSummary> _types = const [];
   int? _courseTypeId;
@@ -115,47 +107,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
     _titleController.dispose();
     _descriptionController.dispose();
     super.dispose();
-  }
-
-  /// True when at least one row leaves it to the screen to say where it
-  /// belongs.
-  bool get _needsFallbackScope => _rows.any((r) =>
-      r.subjectName.trim().isEmpty || r.topicName.trim().isEmpty);
-
-  bool get _hasFallbackScope =>
-      _fallbackSubjectId != null && _fallbackTopicId != null;
-
-  Future<void> _loadSubjects() async {
-    if (_subjects.isNotEmpty || _loadingScope) return;
-    setState(() => _loadingScope = true);
-    final result = await _taxonomy.getSubjects();
-    if (!mounted) return;
-    setState(() {
-      _loadingScope = false;
-      if (result.isSuccess) {
-        _subjects = result.subjects ?? const [];
-      } else {
-        _loadError = result.errorMessage;
-      }
-    });
-  }
-
-  Future<void> _loadTopics(int subjectId) async {
-    setState(() {
-      _loadingScope = true;
-      _topics = const [];
-      _fallbackTopicId = null;
-    });
-    final result = await _taxonomy.getTopics(subjectId: subjectId);
-    if (!mounted) return;
-    setState(() {
-      _loadingScope = false;
-      if (result.isSuccess) {
-        _topics = result.topics ?? const [];
-      } else {
-        _loadError = result.errorMessage;
-      }
-    });
   }
 
   /// The course decides which exams are on offer; the exam is what the quiz
@@ -213,19 +164,13 @@ class _QuizImportTabState extends State<QuizImportTab> {
       setState(() {
         _rows = parsed;
         _choices = [for (final row in parsed) choiceFor(row)];
-        _issues = validateQuestions(parsed,
-            scopeChosenOnScreen: _hasFallbackScope);
+        _issues = validateQuestions(parsed);
       });
-      if (_needsFallbackScope) await _loadSubjects();
     } on SheetCsvException catch (e) {
       if (!mounted) return;
       setState(() => _fileError = e.message);
     }
   }
-
-  /// Re-run after anything that changes whether a row is complete.
-  void _revalidate() => setState(() => _issues =
-      validateQuestions(_rows, scopeChosenOnScreen: _hasFallbackScope));
 
   void _resetResult() {
     _importedSoFar = null;
@@ -240,7 +185,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
 
   bool get _canImport =>
       _titleController.text.trim().isNotEmpty &&
-      (!_needsFallbackScope || _hasFallbackScope) &&
       _rows.isNotEmpty &&
       !_issues.any((i) => !i.isWarning) &&
       _importedSoFar == null;
@@ -249,9 +193,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
   String? get _blockedBecause {
     if (_titleController.text.trim().isEmpty) return 'Give the quiz a title.';
     if (_rows.isEmpty) return 'Choose a CSV file.';
-    if (_needsFallbackScope && !_hasFallbackScope) {
-      return 'Say which subject and topic the file belongs to.';
-    }
     return null;
   }
 
@@ -352,13 +293,16 @@ class _QuizImportTabState extends State<QuizImportTab> {
   /// The ids a row's subject and topic names resolve to, created on the way
   /// when they are new. Cached, so a file of 60 rows in one topic asks once.
   Future<_Scope?> _scopeFor(SheetQuestion row, Map<String, _Scope> cache) async {
-    if (row.subjectName.trim().isEmpty || row.topicName.trim().isEmpty) {
-      return _hasFallbackScope
-          ? _Scope(subjectId: _fallbackSubjectId!, topicId: _fallbackTopicId!)
-          : null;
-    }
+    // The bank files every question under a subject and a topic. A row may
+    // say which; when it does not, the exam does - see [_examScope]. Nothing
+    // is asked on screen either way.
+    final subjectName = row.subjectName.trim().isEmpty
+        ? _examScope.subject
+        : row.subjectName.trim();
+    final topicName =
+        row.topicName.trim().isEmpty ? _examScope.topic : row.topicName.trim();
 
-    final key = '${row.subjectName.toLowerCase()}/${row.topicName.toLowerCase()}';
+    final key = '${subjectName.toLowerCase()}/${topicName.toLowerCase()}';
     final known = cache[key];
     if (known != null) return known;
 
@@ -366,10 +310,10 @@ class _QuizImportTabState extends State<QuizImportTab> {
     if (!subjects.isSuccess) return null;
 
     var subject = (subjects.subjects ?? const <Subject>[])
-        .where((s) => _same(s.name, row.subjectName))
+        .where((s) => _same(s.name, subjectName))
         .firstOrNull;
     if (subject == null) {
-      final made = await _taxonomy.createSubject(name: row.subjectName.trim());
+      final made = await _taxonomy.createSubject(name: subjectName);
       if (!made.isSuccess || made.subject == null) return null;
       subject = made.subject;
     }
@@ -378,11 +322,11 @@ class _QuizImportTabState extends State<QuizImportTab> {
     if (!topics.isSuccess) return null;
 
     var topic = (topics.topics ?? const <Topic>[])
-        .where((t) => _same(t.name, row.topicName))
+        .where((t) => _same(t.name, topicName))
         .firstOrNull;
     if (topic == null) {
       final made = await _taxonomy.createTopic(
-          subjectId: subject.id, name: row.topicName.trim());
+          subjectId: subject.id, name: topicName);
       if (!made.isSuccess || made.topic == null) return null;
       topic = made.topic;
     }
@@ -390,6 +334,24 @@ class _QuizImportTabState extends State<QuizImportTab> {
     final scope = _Scope(subjectId: subject.id, topicId: topic!.id);
     cache[key] = scope;
     return scope;
+  }
+
+  /// Where this upload files itself when the file says nothing: the exam is
+  /// the subject, the quiz is the topic. Both are created if they are new, so
+  /// a question is never homeless and the admin is never asked about a
+  /// taxonomy they did not come here to think about.
+  ({String subject, String topic}) get _examScope {
+    final exam = _types.where((t) => t.id == _courseTypeId).firstOrNull;
+    final courses = context.read<CourseListGetProvider>().courses;
+    final course = courses.where((c) => c.id == _courseId).firstOrNull;
+
+    final subject =
+        (exam?.title ?? course?.title ?? 'Question bank').trim();
+    final title = _titleController.text.trim();
+    return (
+      subject: subject.isEmpty ? 'Question bank' : subject,
+      topic: title.isEmpty ? subject : title,
+    );
   }
 
   static bool _same(String a, String b) =>
@@ -454,8 +416,9 @@ class _QuizImportTabState extends State<QuizImportTab> {
           const SizedBox(height: 4),
           const Text(
             'The rows become questions and the quiz serves exactly those. '
-            'Each row brings its own subject and topic. A quiz is untimed - '
-            'a paper with a clock on it is a test, not a quiz.',
+            'They are filed under the exam you pick, so there is nothing else '
+            'to choose. A quiz is untimed - a paper with a clock on it is a '
+            'test, not a quiz.',
             style: TextStyle(
                 fontSize: 12.5, height: 1.4, color: LmsColors.textGrey),
           ),
@@ -634,6 +597,14 @@ class _QuizImportTabState extends State<QuizImportTab> {
             'test instead.',
             style: TextStyle(fontSize: 12, color: LmsColors.textGrey),
           ),
+          const SizedBox(height: 4),
+          Text(
+            'Filed under the exam: subject "${_examScope.subject}", topic '
+            '"${_examScope.topic}". A file with its own subject and topic '
+            'columns keeps those instead.',
+            style: const TextStyle(
+                fontSize: 12, height: 1.35, color: LmsColors.textGrey),
+          ),
         ],
       );
 
@@ -707,10 +678,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
           TestErrorTable(issues: _issues, nothingWasSaved: blocking > 0),
           const SizedBox(height: 12),
         ],
-        if (_needsFallbackScope) ...[
-          _fallbackPickers(),
-          const SizedBox(height: 12),
-        ],
         _setAllRow(),
         const SizedBox(height: 12),
         for (var i = 0; i < _rows.length; i++) _reviewRow(i),
@@ -755,75 +722,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
       ],
     );
   }
-
-  /// Where rows that do not say belong. A file that says is never asked.
-  Widget _fallbackPickers() => Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFF6EC),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFF2D6AE)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'This file does not say which subject and topic its questions '
-              'are under. Choose one for the whole file.',
-              style: TextStyle(fontSize: 12, height: 1.35),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 12,
-              runSpacing: 10,
-              children: [
-                SizedBox(
-                  width: 240,
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _fallbackSubjectId,
-                    isExpanded: true,
-                    decoration: _fieldDecoration(
-                        _loadingScope ? 'Loading…' : 'Subject'),
-                    items: [
-                      for (final subject in _subjects)
-                        DropdownMenuItem(
-                            value: subject.id, child: Text(subject.name)),
-                    ],
-                    onChanged: _importedSoFar != null
-                        ? null
-                        : (value) {
-                            if (value == null) return;
-                            setState(() => _fallbackSubjectId = value);
-                            _loadTopics(value).then((_) => _revalidate());
-                          },
-                  ),
-                ),
-                SizedBox(
-                  width: 240,
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _fallbackTopicId,
-                    isExpanded: true,
-                    decoration: _fieldDecoration(_fallbackSubjectId == null
-                        ? 'Topic — pick a subject first'
-                        : 'Topic'),
-                    items: [
-                      for (final topic in _topics)
-                        DropdownMenuItem(
-                            value: topic.id, child: Text(topic.name)),
-                    ],
-                    onChanged: _topics.isEmpty || _importedSoFar != null
-                        ? null
-                        : (value) {
-                            setState(() => _fallbackTopicId = value);
-                            _revalidate();
-                          },
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
 
   /// Sixty rows set one at a time is not a review, it is data entry - so the
   /// whole file moves together here, and a row that differs is tapped.
@@ -1129,9 +1027,10 @@ class _QuizImportTabState extends State<QuizImportTab> {
             '$kQuestionCsvHeader\n\n'
             '"Download template" saves exactly that row as an empty file to '
             'fill in.\n\n'
-            'SUBJECT and TOPIC say where each question belongs. Names that do '
-            'not exist yet are created, and one file may cover several of '
-            'them.\n\n'
+            'SUBJECT and TOPIC are optional. Without them every question is '
+            'filed under the exam, which is what most files want; with them, '
+            'one file can cover several subjects, and names that do not exist '
+            'yet are created.\n\n'
             'OPTIONS. Four to six per question, and a file may mix them: '
             'option1 to option4 are required, option5 and option6 are for the '
             'questions that have them. Leave the rest blank.\n\n'
@@ -1195,28 +1094,10 @@ RowChoice choiceFor(SheetQuestion row) => RowChoice(
 /// The server checks its own rules again; this is about catching the whole
 /// file in one look rather than discovering line 40 after 39 questions are
 /// already in the bank.
-List<TestUploadIssue> validateQuestions(
-  List<SheetQuestion> questions, {
-  /// The screen is standing in for the rows that do not say where they
-  /// belong, so their silence is no longer a problem.
-  bool scopeChosenOnScreen = false,
-}) {
+List<TestUploadIssue> validateQuestions(List<SheetQuestion> questions) {
   final issues = <TestUploadIssue>[];
 
   for (final question in questions) {
-    // A row says where it belongs, or the screen says for the whole file.
-    // With neither, there is nowhere to put it.
-    if (!scopeChosenOnScreen &&
-        (question.subjectName.trim().isEmpty ||
-            question.topicName.trim().isEmpty)) {
-      issues.add(TestUploadIssue(
-        row: question.sourceRow,
-        field: 'subject, topic',
-        message: 'Missing — add subject and topic columns, or choose them '
-            'for the whole file below',
-      ));
-    }
-
     if (question.options.length < 4) {
       issues.add(TestUploadIssue(
         row: question.sourceRow,

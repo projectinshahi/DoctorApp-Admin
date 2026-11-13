@@ -58,23 +58,15 @@ void main() {
       expect(validateQuestions(paper), isEmpty);
     });
 
-    test('a row that does not say where it belongs is refused', () {
-      final issues = validateQuestions(SheetCsvService().parseCsv(
-        'question_text,option1,option2,option3,option4,correct_option\n'
-        'Belongs nowhere,A,B,C,D,1\n',
-      ));
-
-      expect(issues.single.field, 'subject, topic');
-      expect(issues.single.isWarning, isFalse);
-    });
-
-    test('unless the screen says where the whole file belongs', () {
+    test('a file with no subject or topic columns is fine - the exam says',
+        () {
       final rows = SheetCsvService().parseCsv(
         'question_text,option1,option2,option3,option4,correct_option\n'
-        'Belongs nowhere,A,B,C,D,1\n',
+        'Says nothing about where it belongs,A,B,C,D,1\n',
       );
 
-      expect(validateQuestions(rows, scopeChosenOnScreen: true), isEmpty);
+      expect(validateQuestions(rows), isEmpty);
+      expect(rows.single.subjectName, isEmpty);
     });
 
     test('fewer than four options is refused, naming the line', () {
