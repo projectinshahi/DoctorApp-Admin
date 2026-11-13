@@ -33,7 +33,7 @@ import '../Test/test_error_table.dart';
 ///   1. subject and topic names -> ids   (created when missing)
 ///   2. every row               -> question   POST /api/questions
 ///   3. the quiz                             POST /api/quizzes
-///   4. those exact questions pinned to it   PUT  /admin/quizzes/:id/questions
+///   4. those exact questions pinned to it   PUT  /api/quizzes/:id/questions
 ///   5. any row marked draft                 PATCH /api/questions/bulk-status
 ///
 /// Step 4 is what makes the quiz serve the file rather than everything that
@@ -395,10 +395,14 @@ class _QuizImportTabState extends State<QuizImportTab> {
 
     setState(() {
       _quiz = quiz;
+      // A failed pin is not a failed upload. The quiz filters the subject and
+      // topic these questions were just filed under, so it serves them
+      // anyway - it is their order that is left to the server.
       _quizError = pinned.isSuccess
           ? null
-          : pinned.errorMessage ??
-              'The quiz was created, but its questions could not be pinned';
+          : 'The quiz was created and serves these questions, but their '
+              'order could not be saved: '
+              '${pinned.errorMessage ?? 'the server refused it'}';
     });
   }
 

@@ -280,7 +280,7 @@ class QuizService {
 
   /// The questions pinned to a quiz, and which mode it is in.
   ///
-  /// GET /api/admin/quizzes/:id/questions
+  /// GET /api/quizzes/:id/questions
   ///
   /// `mode` is the whole point: "manual" means the admin pinned exactly these,
   /// in this order; "filter" means the quiz samples from its subject and topic
@@ -291,7 +291,7 @@ class QuizService {
       return QuizQuestionSetResult.failure('Session expired. Please log in again.');
     }
 
-    final uri = Uri.parse('$baseUrl/admin/quizzes/$quizId/questions');
+    final uri = Uri.parse('$baseUrl/quizzes/$quizId/questions');
     _log('[QUIZ SET] GET $uri');
 
     try {
@@ -312,7 +312,7 @@ class QuizService {
 
   /// Replaces the whole pinned set.
   ///
-  /// PUT /api/admin/quizzes/:id/questions  { questionIds }
+  /// PUT /api/quizzes/:id/questions  { questionIds }
   ///
   /// The array IS the order - displayOrder comes from the index - and it is
   /// also the membership: an id left out is removed, an id added is pinned.
@@ -330,7 +330,7 @@ class QuizService {
       return QuizQuestionSetResult.failure('Session expired. Please log in again.');
     }
 
-    final uri = Uri.parse('$baseUrl/admin/quizzes/$quizId/questions');
+    final uri = Uri.parse('$baseUrl/quizzes/$quizId/questions');
     _log('[QUIZ SET] PUT $uri  order=$questionIds');
 
     try {
