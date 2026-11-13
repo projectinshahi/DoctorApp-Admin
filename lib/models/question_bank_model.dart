@@ -173,6 +173,13 @@ class Question {
   final String? explanation;
   final QuestionStatus status;
 
+  /// `free` | `premium`, the question's own. Free unless the server says
+  /// otherwise - that is the API's default, and the safer one to assume.
+  ///
+  /// It only bites where a student can already open the lesson: a premium
+  /// course gates everything before a question is reached.
+  final String accessType;
+
   /// Nested on the response as `{ id, name }`.
   final Subject? subject;
   final Topic? topic;
@@ -200,6 +207,7 @@ class Question {
     required this.marksIncorrect,
     this.explanation,
     required this.status,
+    this.accessType = 'free',
     this.subject,
     this.topic,
     this.options = const [],
@@ -237,6 +245,7 @@ class Question {
       marksIncorrect: json['marksIncorrect'] as num? ?? 0,
       explanation: json['explanation'] as String?,
       status: QuestionStatusX.fromApiValue(json['status'] as String?),
+      accessType: '${json['accessType'] ?? 'free'}'.toLowerCase(),
       subject: json['subject'] is Map<String, dynamic>
           ? Subject.fromJson(json['subject'] as Map<String, dynamic>)
           : null,
@@ -265,6 +274,7 @@ class Question {
         'marksCorrect': marksCorrect,
         'marksIncorrect': marksIncorrect,
         'explanation': explanation,
+        'accessType': accessType,
         'tags': tagNames,
         'options': options.map((o) => o.toPayload()).toList(),
       };

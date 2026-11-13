@@ -39,6 +39,16 @@ class SheetQuestion {
   /// 1-based, matching the sheet's `correct_option` column.
   final int correctOption;
 
+  /// `free` | `premium`, when the file says. Empty means it did not, and the
+  /// admin's choice on the review screen decides.
+  final String accessType;
+
+  /// The subject and topic this row belongs under, by name. The file carries
+  /// them so one upload can fill several topics; names that do not exist yet
+  /// are created.
+  final String subjectName;
+  final String topicName;
+
   /// The line this came from in the file, counting the header as line 1, so
   /// a complaint about it names the line the admin can go and look at.
   final int sourceRow;
@@ -51,6 +61,9 @@ class SheetQuestion {
     this.questionImageUrl,
     this.difficulty = '',
     this.status = 'active',
+    this.accessType = '',
+    this.subjectName = '',
+    this.topicName = '',
     this.sourceRow = 0,
     this.tags = const [],
     this.marksCorrect = '',

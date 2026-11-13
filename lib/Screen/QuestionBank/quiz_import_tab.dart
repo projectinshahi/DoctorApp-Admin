@@ -12,9 +12,9 @@ import '../../models/quiz_model.dart';
 import '../../models/sheet_row_model.dart';
 import '../../provider/course_get_provider.dart';
 import '../../services/course_details_service.dart';
-import '../../services/quiz_service.dart';
 import '../../services/file_download.dart';
 import '../../services/question_bank_service.dart';
+import '../../services/quiz_service.dart';
 import '../../services/sheet_csv_service.dart';
 import '../../services/subject_topic_service.dart';
 import '../Test/test_error_table.dart';
@@ -22,15 +22,21 @@ import '../Test/test_error_table.dart';
 /// Making a quiz out of a CSV, the way a mock test is made out of one.
 ///
 /// A quiz has no clock - that is what separates it from a test. What it has
-/// is a course and an exam it is for, a subject and topic its questions live
-/// under, and the questions themselves.
+/// is a course and an exam it is for, a title, and the questions themselves.
 ///
-/// Three writes, in this order, because each needs the one before it:
-///   1. every row becomes a question in the bank   POST /api/questions
-///   2. the quiz                                   POST /api/quizzes
-///   3. those exact questions pinned to it         PUT  /admin/quizzes/:id/questions
+/// **The subject and topic come from the file**, a column each, resolved to
+/// ids and created when they do not exist yet. One upload can fill several
+/// topics, and the admin is not asked to repeat on screen what the file
+/// already says.
 ///
-/// Step 3 is what makes the quiz serve the file rather than everything that
+/// Writes, in this order, because each needs the one before it:
+///   1. subject and topic names -> ids   (created when missing)
+///   2. every row               -> question   POST /api/questions
+///   3. the quiz                             POST /api/quizzes
+///   4. those exact questions pinned to it   PUT  /admin/quizzes/:id/questions
+///   5. any row marked draft                 PATCH /api/questions/bulk-status
+///
+/// Step 4 is what makes the quiz serve the file rather than everything that
 /// happens to share the topic. The file is read here rather than posted:
 /// there is no bulk import route, which is also why a half-finished import
 /// leaves the questions it already made.
@@ -41,46 +47,50 @@ class QuizImportTab extends StatefulWidget {
   State<QuizImportTab> createState() => _QuizImportTabState();
 }
 
+/// What the admin chose for one row of the file, seeded from the file
+/// itself. Mutable: the review screen is where these get changed.
+class RowChoice {
+  bool free;
+  bool published;
+
+  RowChoice({required this.free, required this.published});
+}
+
 class _QuizImportTabState extends State<QuizImportTab> {
   final _taxonomy = SubjectTopicService();
   final _questions = QuestionBankService();
   final _quizzes = QuizService();
   final _courseDetails = CourseDetailsService();
   final _csv = SheetCsvService();
+
   final _titleController = TextEditingController();
+  final _descriptionController = TextEditingController();
 
   int? _courseId;
   List<CourseTypeSummary> _types = const [];
   int? _courseTypeId;
   bool _loadingTypes = false;
-
-  List<Subject> _subjects = const [];
-  List<Topic> _topics = const [];
-  int? _subjectId;
-  int? _topicId;
-  bool _loadingSubjects = false;
-  bool _loadingTopics = false;
-  String? _taxonomyError;
+  String? _loadError;
 
   String? _fileName;
   List<SheetQuestion> _rows = const [];
+  List<RowChoice> _choices = const [];
   List<TestUploadIssue> _issues = const [];
   String? _fileError;
 
   /// How many rows have been sent, while sending. Null when idle.
   int? _importedSoFar;
+  int _created = 0;
+  List<TestUploadIssue> _failures = const [];
 
   /// The quiz the import built, once it exists, and whatever stopped it.
   Quiz? _quiz;
   String? _quizError;
-  int _created = 0;
-  List<TestUploadIssue> _failures = const [];
   bool _done = false;
 
   @override
   void initState() {
     super.initState();
-    _loadSubjects();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final provider = context.read<CourseListGetProvider>();
@@ -95,6 +105,7 @@ class _QuizImportTabState extends State<QuizImportTab> {
   @override
   void dispose() {
     _titleController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -106,6 +117,7 @@ class _QuizImportTabState extends State<QuizImportTab> {
       _courseTypeId = null;
       _types = const [];
       _loadingTypes = true;
+      _loadError = null;
     });
 
     try {
@@ -120,45 +132,9 @@ class _QuizImportTabState extends State<QuizImportTab> {
       if (!mounted || _courseId != courseId) return;
       setState(() {
         _loadingTypes = false;
-        _taxonomyError = 'Could not load this course\'s exams: $e';
+        _loadError = 'Could not load this course\'s exams: $e';
       });
     }
-  }
-
-  Future<void> _loadSubjects() async {
-    setState(() {
-      _loadingSubjects = true;
-      _taxonomyError = null;
-    });
-    final result = await _taxonomy.getSubjects();
-    if (!mounted) return;
-    setState(() {
-      _loadingSubjects = false;
-      if (result.isSuccess) {
-        _subjects = result.subjects ?? const [];
-      } else {
-        _taxonomyError = result.errorMessage;
-      }
-    });
-  }
-
-  Future<void> _loadTopics(int subjectId) async {
-    setState(() {
-      _loadingTopics = true;
-      _topics = const [];
-      _topicId = null;
-      _taxonomyError = null;
-    });
-    final result = await _taxonomy.getTopics(subjectId: subjectId);
-    if (!mounted) return;
-    setState(() {
-      _loadingTopics = false;
-      if (result.isSuccess) {
-        _topics = result.topics ?? const [];
-      } else {
-        _taxonomyError = result.errorMessage;
-      }
-    });
   }
 
   // ── The file ─────────────────────────────────────────────────────
@@ -176,6 +152,7 @@ class _QuizImportTabState extends State<QuizImportTab> {
       _fileName = file.name;
       _fileError = null;
       _rows = const [];
+      _choices = const [];
       _issues = const [];
       _resetResult();
     });
@@ -186,6 +163,7 @@ class _QuizImportTabState extends State<QuizImportTab> {
       if (!mounted) return;
       setState(() {
         _rows = parsed;
+        _choices = [for (final row in parsed) choiceFor(row)];
         _issues = validateQuestions(parsed);
       });
     } on SheetCsvException catch (e) {
@@ -206,8 +184,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
   // ── The import ───────────────────────────────────────────────────
 
   bool get _canImport =>
-      _subjectId != null &&
-      _topicId != null &&
       _titleController.text.trim().isNotEmpty &&
       _rows.isNotEmpty &&
       !_issues.any((i) => !i.isWarning) &&
@@ -215,20 +191,13 @@ class _QuizImportTabState extends State<QuizImportTab> {
 
   /// What stopped the button being pressable, or null when nothing does.
   String? get _blockedBecause {
-    if (_subjectId == null || _topicId == null) {
-      return 'Pick a subject and a topic first.';
-    }
-    if (_titleController.text.trim().isEmpty) {
-      return 'Give the quiz a title.';
-    }
+    if (_titleController.text.trim().isEmpty) return 'Give the quiz a title.';
     if (_rows.isEmpty) return 'Choose a CSV file.';
     return null;
   }
 
   Future<void> _import() async {
     if (!_canImport) return;
-    final subjectId = _subjectId!;
-    final topicId = _topicId!;
 
     setState(() {
       _resetResult();
@@ -237,17 +206,42 @@ class _QuizImportTabState extends State<QuizImportTab> {
 
     final failures = <TestUploadIssue>[];
     final createdIds = <int>[];
+    final draftIds = <int>[];
+    final scopes = <String, _Scope>{}; // "subject/topic" -> ids
+    int? firstSubjectId;
+    int? firstTopicId;
 
     for (var i = 0; i < _rows.length; i++) {
       final row = _rows[i];
-      final result = await _questions.createQuestion(
-        questionFrom(row, subjectId: subjectId, topicId: topicId),
-      );
+      final choice = _choices[i];
+
+      final scope = await _scopeFor(row, scopes);
+      if (!mounted) return;
+      if (scope == null) {
+        failures.add(TestUploadIssue(
+          row: row.sourceRow,
+          field: 'subject',
+          message: 'Could not find or create "${row.subjectName}" / '
+              '"${row.topicName}"',
+        ));
+        setState(() => _importedSoFar = i + 1);
+        continue;
+      }
+      firstSubjectId ??= scope.subjectId;
+      firstTopicId ??= scope.topicId;
+
+      final result = await _questions.createQuestion(questionFrom(
+        row,
+        subjectId: scope.subjectId,
+        topicId: scope.topicId,
+        free: choice.free,
+      ));
       if (!mounted) return;
 
       final id = result.question?.id;
       if (result.isSuccess && id != null) {
         createdIds.add(id);
+        if (!choice.published) draftIds.add(id);
       } else {
         failures.add(TestUploadIssue(
           row: row.sourceRow,
@@ -265,8 +259,28 @@ class _QuizImportTabState extends State<QuizImportTab> {
     if (!mounted) return;
     setState(() => _importedSoFar = null);
 
-    if (createdIds.isNotEmpty) {
-      await _buildQuiz(createdIds, subjectId: subjectId, topicId: topicId);
+    if (createdIds.isNotEmpty &&
+        firstSubjectId != null &&
+        firstTopicId != null) {
+      await _buildQuiz(createdIds,
+          subjectId: firstSubjectId, topicId: firstTopicId);
+      if (!mounted) return;
+
+      // Drafts last: a question students must not see yet is better created
+      // and then hidden than left out of the quiz it belongs to.
+      if (draftIds.isNotEmpty) {
+        final hidden = await _questions.bulkUpdateStatus(
+            draftIds, QuestionStatus.inactive);
+        if (!mounted) return;
+        if (!hidden.isSuccess) {
+          failures.add(TestUploadIssue(
+            row: 0,
+            field: 'status',
+            message: hidden.errorMessage ??
+                'The drafts could not be hidden - they are published',
+          ));
+        }
+      }
     }
 
     if (!mounted) return;
@@ -275,6 +289,46 @@ class _QuizImportTabState extends State<QuizImportTab> {
       _done = true;
     });
   }
+
+  /// The ids a row's subject and topic names resolve to, created on the way
+  /// when they are new. Cached, so a file of 60 rows in one topic asks once.
+  Future<_Scope?> _scopeFor(SheetQuestion row, Map<String, _Scope> cache) async {
+    final key = '${row.subjectName.toLowerCase()}/${row.topicName.toLowerCase()}';
+    final known = cache[key];
+    if (known != null) return known;
+
+    final subjects = await _taxonomy.getSubjects(isActive: null);
+    if (!subjects.isSuccess) return null;
+
+    var subject = (subjects.subjects ?? const <Subject>[])
+        .where((s) => _same(s.name, row.subjectName))
+        .firstOrNull;
+    if (subject == null) {
+      final made = await _taxonomy.createSubject(name: row.subjectName.trim());
+      if (!made.isSuccess || made.subject == null) return null;
+      subject = made.subject;
+    }
+
+    final topics = await _taxonomy.getTopics(subjectId: subject!.id, isActive: null);
+    if (!topics.isSuccess) return null;
+
+    var topic = (topics.topics ?? const <Topic>[])
+        .where((t) => _same(t.name, row.topicName))
+        .firstOrNull;
+    if (topic == null) {
+      final made = await _taxonomy.createTopic(
+          subjectId: subject.id, name: row.topicName.trim());
+      if (!made.isSuccess || made.topic == null) return null;
+      topic = made.topic;
+    }
+
+    final scope = _Scope(subjectId: subject.id, topicId: topic!.id);
+    cache[key] = scope;
+    return scope;
+  }
+
+  static bool _same(String a, String b) =>
+      a.trim().toLowerCase() == b.trim().toLowerCase();
 
   /// The quiz over the questions just made, serving those and nothing else.
   ///
@@ -290,6 +344,7 @@ class _QuizImportTabState extends State<QuizImportTab> {
     final created = await _quizzes.create(Quiz(
       id: 0,
       title: _titleController.text.trim(),
+      description: _descriptionController.text.trim(),
       subjectId: subjectId,
       topicId: topicId,
       examTag: exam?.title,
@@ -300,9 +355,8 @@ class _QuizImportTabState extends State<QuizImportTab> {
 
     final quiz = created.quiz;
     if (!created.isSuccess || quiz == null) {
-      setState(() => _quizError =
-          created.errorMessage ?? 'The questions were saved, but the quiz '
-              'could not be created');
+      setState(() => _quizError = created.errorMessage ??
+          'The questions were saved, but the quiz could not be created');
       return;
     }
 
@@ -334,9 +388,9 @@ class _QuizImportTabState extends State<QuizImportTab> {
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           const Text(
-            'The rows become questions in the bank, and the quiz serves '
-            'exactly those. A quiz is untimed - students take it at their own '
-            'pace. A paper with a clock on it is a test, not a quiz.',
+            'The rows become questions and the quiz serves exactly those. '
+            'Each row brings its own subject and topic. A quiz is untimed - '
+            'a paper with a clock on it is a test, not a quiz.',
             style: TextStyle(
                 fontSize: 12.5, height: 1.4, color: LmsColors.textGrey),
           ),
@@ -349,34 +403,19 @@ class _QuizImportTabState extends State<QuizImportTab> {
           ),
           const SizedBox(height: 12),
 
-          _card(
-            step: '2',
-            title: 'Where the questions belong',
-            child: _scopePickers(),
-          ),
+          _card(step: '2', title: 'The quiz', child: _quizDetails()),
           const SizedBox(height: 12),
 
-          _card(
-            step: '3',
-            title: 'The quiz',
-            child: _quizDetails(),
-          ),
-          const SizedBox(height: 12),
-
-          _card(
-            step: '4',
-            title: 'The file',
-            child: _filePicker(),
-          ),
+          _card(step: '3', title: 'The file', child: _filePicker()),
 
           if (_rows.isNotEmpty || _fileError != null) ...[
             const SizedBox(height: 12),
-            _card(step: '5', title: 'What the file says', child: _review()),
+            _card(step: '4', title: 'Review the questions', child: _review()),
           ],
 
           if (_done) ...[
             const SizedBox(height: 12),
-            _card(step: '6', title: 'Result', child: _result()),
+            _card(step: '5', title: 'Result', child: _result()),
           ],
         ],
       ),
@@ -455,8 +494,9 @@ class _QuizImportTabState extends State<QuizImportTab> {
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2))
         else if (_types.isEmpty)
-          const Text('This course has no exams yet. The quiz will not be '
-              'tagged with one.',
+          const Text(
+              'This course has no exams yet. The quiz will not be tagged '
+              'with one.',
               style: TextStyle(fontSize: 12, color: LmsColors.textGrey))
         else
           Wrap(
@@ -489,6 +529,11 @@ class _QuizImportTabState extends State<QuizImportTab> {
                 ),
             ],
           ),
+        if (_loadError != null) ...[
+          const SizedBox(height: 8),
+          Text(_loadError!,
+              style: const TextStyle(fontSize: 12, color: LmsColors.error)),
+        ],
       ],
     );
   }
@@ -503,8 +548,19 @@ class _QuizImportTabState extends State<QuizImportTab> {
               enabled: _importedSoFar == null,
               onChanged: (_) => setState(() {}),
               style: const TextStyle(fontSize: 13.5),
-              decoration:
-                  _fieldDecoration('Quiz title, as students see it'),
+              decoration: _fieldDecoration('Title, as students see it'),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: 560,
+            child: TextField(
+              controller: _descriptionController,
+              enabled: _importedSoFar == null,
+              minLines: 2,
+              maxLines: null,
+              style: const TextStyle(fontSize: 13.5),
+              decoration: _fieldDecoration('Description (optional)'),
             ),
           ),
           const SizedBox(height: 8),
@@ -515,82 +571,6 @@ class _QuizImportTabState extends State<QuizImportTab> {
           ),
         ],
       );
-
-  Widget _scopePickers() {
-    if (_loadingSubjects) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2)),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            SizedBox(
-              width: 260,
-              child: DropdownButtonFormField<int>(
-                initialValue: _subjectId,
-                isExpanded: true,
-                decoration: _fieldDecoration('Subject'),
-                items: [
-                  for (final subject in _subjects)
-                    DropdownMenuItem(
-                        value: subject.id, child: Text(subject.name)),
-                ],
-                onChanged: _importedSoFar != null
-                    ? null
-                    : (value) {
-                        if (value == null) return;
-                        setState(() => _subjectId = value);
-                        _loadTopics(value);
-                      },
-              ),
-            ),
-            SizedBox(
-              width: 260,
-              child: DropdownButtonFormField<int>(
-                initialValue: _topicId,
-                isExpanded: true,
-                decoration: _fieldDecoration(_loadingTopics
-                    ? 'Loading topics…'
-                    : _subjectId == null
-                        ? 'Topic — pick a subject first'
-                        : 'Topic'),
-                items: [
-                  for (final topic in _topics)
-                    DropdownMenuItem(value: topic.id, child: Text(topic.name)),
-                ],
-                onChanged: _topics.isEmpty || _importedSoFar != null
-                    ? null
-                    : (value) => setState(() => _topicId = value),
-              ),
-            ),
-          ],
-        ),
-        if (_taxonomyError != null) ...[
-          const SizedBox(height: 8),
-          Text(_taxonomyError!,
-              style: const TextStyle(fontSize: 12, color: LmsColors.error)),
-        ],
-        if (!_loadingTopics && _subjectId != null && _topics.isEmpty) ...[
-          const SizedBox(height: 8),
-          const Text(
-            'This subject has no topics yet. Add one before importing — a '
-            'bank question has to sit under a topic.',
-            style: TextStyle(fontSize: 12, color: LmsColors.textGrey),
-          ),
-        ],
-      ],
-    );
-  }
 
   Widget _filePicker() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -603,7 +583,8 @@ class _QuizImportTabState extends State<QuizImportTab> {
               ElevatedButton.icon(
                 onPressed: _importedSoFar != null ? null : _pickFile,
                 icon: const Icon(Icons.upload_file_rounded, size: 18),
-                label: Text(_fileName == null ? 'Choose CSV file' : 'Replace file'),
+                label:
+                    Text(_fileName == null ? 'Choose CSV file' : 'Replace file'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: LmsColors.primary,
                   foregroundColor: Colors.white,
@@ -661,13 +642,9 @@ class _QuizImportTabState extends State<QuizImportTab> {
           TestErrorTable(issues: _issues, nothingWasSaved: blocking > 0),
           const SizedBox(height: 12),
         ],
-        ..._rows.take(5).map(_previewRow),
-        if (_rows.length > 5) ...[
-          const SizedBox(height: 6),
-          Text('…and ${_rows.length - 5} more',
-              style:
-                  const TextStyle(fontSize: 12, color: LmsColors.textGrey)),
-        ],
+        _setAllRow(),
+        const SizedBox(height: 10),
+        for (var i = 0; i < _rows.length; i++) _reviewRow(i),
         const SizedBox(height: 14),
         if (_importedSoFar != null)
           Column(
@@ -678,8 +655,9 @@ class _QuizImportTabState extends State<QuizImportTab> {
                 minHeight: 6,
               ),
               const SizedBox(height: 8),
-              Text('Adding question $_importedSoFar of ${_rows.length} — '
-                  'keep this tab open',
+              Text(
+                  'Adding question $_importedSoFar of ${_rows.length} — keep '
+                  'this tab open',
                   style: const TextStyle(
                       fontSize: 12, color: LmsColors.textGrey)),
             ],
@@ -694,56 +672,143 @@ class _QuizImportTabState extends State<QuizImportTab> {
               backgroundColor: LmsColors.success,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-              shape:
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
             ),
           ),
-        if (_importedSoFar == null && blocking == 0 && _blockedBecause != null) ...[
+        if (_importedSoFar == null &&
+            blocking == 0 &&
+            _blockedBecause != null) ...[
           const SizedBox(height: 8),
           Text(_blockedBecause!,
-              style: const TextStyle(
-                  fontSize: 12, color: LmsColors.textGrey)),
+              style: const TextStyle(fontSize: 12, color: LmsColors.textGrey)),
         ],
       ],
     );
   }
 
-  Widget _previewRow(SheetQuestion question) {
+  /// Sixty rows set one at a time is not a review, it is data entry.
+  Widget _setAllRow() => Wrap(
+        spacing: 10,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          const Text('Set all:',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: LmsColors.textGrey)),
+          _setAllButton('Free', () => _setAll(free: true)),
+          _setAllButton('Premium', () => _setAll(free: false)),
+          _setAllButton('Published', () => _setAll(published: true)),
+          _setAllButton('Draft', () => _setAll(published: false)),
+        ],
+      );
+
+  Widget _setAllButton(String label, VoidCallback onTap) => OutlinedButton(
+        onPressed: _importedSoFar != null ? null : onTap,
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          foregroundColor: LmsColors.textDark,
+          side: const BorderSide(color: LmsColors.border),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        ),
+        child: Text(label,
+            style:
+                const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+      );
+
+  void _setAll({bool? free, bool? published}) => setState(() {
+        for (final choice in _choices) {
+          if (free != null) choice.free = free;
+          if (published != null) choice.published = published;
+        }
+      });
+
+  Widget _reviewRow(int index) {
+    final question = _rows[index];
+    final choice = _choices[index];
     final answer = question.correctOption >= 1 &&
             question.correctOption <= question.options.length
         ? question.options[question.correctOption - 1]
         : null;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+      decoration: BoxDecoration(
+        color: choice.published ? Colors.white : LmsColors.bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: LmsColors.border),
+      ),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 34,
-            child: Text('L${question.sourceRow}',
-                style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: LmsColors.textGrey)),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(question.questionText,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 34,
+                child: Text('L${question.sourceRow}',
                     style: const TextStyle(
-                        fontSize: 12.5, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 2),
-                Text(
-                  '${question.options.length} options'
-                  '${answer == null ? '' : ' · answer: $answer'}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 11.5, color: LmsColors.textGrey),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: LmsColors.textGrey)),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(question.questionText,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${question.options.length} options'
+                      '${answer == null ? '' : ' · answer: $answer'}'
+                      '${question.subjectName.isEmpty ? '' : ' · ${question.subjectName}'}'
+                      '${question.topicName.isEmpty ? '' : ' / ${question.topicName}'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 11.5, color: LmsColors.textGrey),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Padding(
+            padding: const EdgeInsets.only(left: 34),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _pill(
+                  label: choice.free ? 'Free' : 'Premium',
+                  icon: choice.free
+                      ? Icons.lock_open_rounded
+                      : Icons.workspace_premium_rounded,
+                  colour:
+                      choice.free ? const Color(0xFF14A38B) : LmsColors.primary,
+                  onTap: () => setState(() => choice.free = !choice.free),
+                ),
+                _pill(
+                  label: choice.published ? 'Published' : 'Draft',
+                  icon: choice.published
+                      ? Icons.visibility_outlined
+                      : Icons.edit_note_rounded,
+                  colour: choice.published
+                      ? LmsColors.success
+                      : LmsColors.textGrey,
+                  onTap: () =>
+                      setState(() => choice.published = !choice.published),
                 ),
               ],
             ),
@@ -753,32 +818,61 @@ class _QuizImportTabState extends State<QuizImportTab> {
     );
   }
 
+  Widget _pill({
+    required String label,
+    required IconData icon,
+    required Color colour,
+    required VoidCallback onTap,
+  }) =>
+      InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: _importedSoFar != null ? null : onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          decoration: BoxDecoration(
+            color: colour.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: colour.withValues(alpha: 0.4)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 12, color: colour),
+              const SizedBox(width: 4),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: colour)),
+            ],
+          ),
+        ),
+      );
+
   Widget _result() {
     final failed = _failures.length;
     final ok = failed == 0 && _quiz != null && _quizError == null;
+    final drafts = _choices.where((c) => !c.published).length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(
-                ok
-                    ? Icons.check_circle_rounded
-                    : Icons.error_outline_rounded,
-                size: 18,
-                color: ok ? LmsColors.success : LmsColors.error),
+            Icon(ok ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                size: 18, color: ok ? LmsColors.success : LmsColors.error),
             const SizedBox(width: 7),
             Expanded(
               child: Text(
                 _quiz == null
-                    ? '$_created question${_created == 1 ? '' : 's'} added, no '
-                        'quiz made'
+                    ? '$_created question${_created == 1 ? '' : 's'} added, '
+                        'no quiz made'
                     : '"${_quiz!.title}" serves $_created question'
                         '${_created == 1 ? '' : 's'}'
+                        '${drafts == 0 ? '' : ', $drafts kept as drafts'}'
                         '${failed == 0 ? '' : ', $failed refused'}',
-                style: const TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w800),
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
               ),
             ),
           ],
@@ -822,7 +916,7 @@ class _QuizImportTabState extends State<QuizImportTab> {
       );
 
   void _downloadTemplate() =>
-      downloadTextFile('question_bank_template.csv', '$kQuestionCsvHeader\n');
+      downloadTextFile('quiz_questions_template.csv', '$kQuestionCsvHeader\n');
 
   void _showFormat() {
     showDialog<void>(
@@ -836,20 +930,24 @@ class _QuizImportTabState extends State<QuizImportTab> {
             '$kQuestionCsvHeader\n\n'
             '"Download template" saves exactly that row as an empty file to '
             'fill in.\n\n'
+            'SUBJECT and TOPIC say where each question belongs. Names that do '
+            'not exist yet are created, and one file may cover several of '
+            'them.\n\n'
             'OPTIONS. Four to six per question, and a file may mix them: '
             'option1 to option4 are required, option5 and option6 are for the '
             'questions that have them. Leave the rest blank.\n\n'
             'correct_option points at the answer, as a number (1-6) or as a '
             'letter (A-F). It has to point at an option that is filled in.\n\n'
+            'access is free or premium, and status is published or draft. '
+            'Blank means free and published, and either can be changed per '
+            'question on the review step.\n\n'
             'difficulty is easy, medium or hard — blank means medium. '
             'marks_correct and marks_incorrect are numbers; blank means 1 and '
             '0. tags are separated by commas inside the one cell, which means '
             'the cell has to be quoted: "anatomy, thorax".\n\n'
             'IMAGES. question_image_url and optionN_image_url take an address '
             'the picture already lives at, not a file. Upload the picture '
-            'first and paste its link.\n\n'
-            'The subject and topic are the ones picked above, not columns: '
-            'every row in the file lands in the same place.',
+            'first and paste its link.',
             style: TextStyle(fontSize: 13, height: 1.5),
           ),
         ),
@@ -862,16 +960,36 @@ class _QuizImportTabState extends State<QuizImportTab> {
   }
 }
 
+/// A subject and topic pair, once their names have been resolved to ids.
+class _Scope {
+  final int subjectId;
+  final int topicId;
+
+  const _Scope({required this.subjectId, required this.topicId});
+}
+
 /// The columns the parser reads, as the row the template carries.
 ///
 /// Headers only when downloaded: a template with sample rows in it comes back
 /// uploaded with the samples still in it.
 const String kQuestionCsvHeader =
-    'question_text,question_image_url,'
+    'subject,topic,question_text,question_image_url,'
     'option1,option1_image_url,option2,option2_image_url,'
     'option3,option3_image_url,option4,option4_image_url,'
     'option5,option5_image_url,option6,option6_image_url,'
-    'correct_option,difficulty,marks_correct,marks_incorrect,explanation,tags';
+    'correct_option,access,status,difficulty,marks_correct,marks_incorrect,'
+    'explanation,tags';
+
+/// What a row starts as on the review screen.
+///
+/// The file may say; where it does not, free and published are the defaults -
+/// free because that is the API's default, published because a question
+/// uploaded to a quiz is meant to be answered.
+RowChoice choiceFor(SheetQuestion row) => RowChoice(
+      free: row.accessType.trim().toLowerCase() != 'premium',
+      published: !const ['draft', 'inactive']
+          .contains(row.status.trim().toLowerCase()),
+    );
 
 /// What is wrong with the file, before anything is sent.
 ///
@@ -882,6 +1000,18 @@ List<TestUploadIssue> validateQuestions(List<SheetQuestion> questions) {
   final issues = <TestUploadIssue>[];
 
   for (final question in questions) {
+    // The subject and topic are the file's job now: nothing on screen says
+    // where a row belongs, so a row that does not say either cannot be saved.
+    if (question.subjectName.trim().isEmpty ||
+        question.topicName.trim().isEmpty) {
+      issues.add(TestUploadIssue(
+        row: question.sourceRow,
+        field: 'subject, topic',
+        message: 'Missing — every row says which subject and topic it is '
+            'under',
+      ));
+    }
+
     if (question.options.length < 4) {
       issues.add(TestUploadIssue(
         row: question.sourceRow,
@@ -934,12 +1064,13 @@ List<TestUploadIssue> validateQuestions(List<SheetQuestion> questions) {
 
 /// One CSV row as the bank's create endpoint wants it.
 ///
-/// The subject and topic come from the pickers, not the file: the whole point
-/// of the tab is that one file fills one place in the bank.
+/// The ids are resolved from the row's own subject and topic names; [free] is
+/// what the review screen last showed for it.
 Question questionFrom(
   SheetQuestion row, {
   required int subjectId,
   required int topicId,
+  required bool free,
 }) =>
     Question(
       id: 0,
@@ -952,7 +1083,10 @@ Question questionFrom(
       marksCorrect: num.tryParse(row.marksCorrect.trim()) ?? 1,
       marksIncorrect: num.tryParse(row.marksIncorrect.trim()) ?? 0,
       explanation: row.explanation.trim().isEmpty ? null : row.explanation.trim(),
+      // Created active whatever the row says: a draft is hidden afterwards,
+      // in one call for all of them, because the create body has no status.
       status: QuestionStatus.active,
+      accessType: free ? 'free' : 'premium',
       tagNames: row.tags,
       options: [
         for (var i = 0; i < row.options.length; i++)

@@ -111,6 +111,16 @@ class SheetCsvService {
         options: options,
         optionImageUrls: optionImages,
         correctOption: readCorrectOption(cell('correct_option')),
+        // Either spelling: a file written for the API says accessType, one
+        // written by a person says access.
+        accessType: (cell('access_type').isEmpty
+                ? (cell('accessType').isEmpty
+                    ? cell('access')
+                    : cell('accessType'))
+                : cell('access_type'))
+            .toLowerCase(),
+        subjectName: cell('subject'),
+        topicName: cell('topic'),
         // +2: the header is line 1 and spreadsheets count from 1.
         sourceRow: index + 2,
       ));

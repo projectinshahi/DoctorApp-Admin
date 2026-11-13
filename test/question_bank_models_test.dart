@@ -147,7 +147,8 @@ void main() {
       final payload = q.toPayload();
       expect(payload.keys.toSet(), {
         'subjectId', 'topicId', 'questionText', 'questionImageUrl', 'difficulty',
-        'marksCorrect', 'marksIncorrect', 'explanation', 'tags', 'options',
+        'marksCorrect', 'marksIncorrect', 'explanation', 'accessType', 'tags',
+        'options',
       });
 
       // Status moves only through PATCH /questions/:id/status; server-shaped

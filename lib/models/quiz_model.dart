@@ -16,6 +16,10 @@ class Quiz {
   final int topicId;
   final String? examTag;
 
+  /// What the quiz is for, in the admin's words. Sent only when it is
+  /// written: an older server that does not know the field ignores it.
+  final String? description;
+
   /// How many questions this quiz serves per attempt.
   /// Null means "serve every question that matches".
   final int? questionCount;
@@ -47,6 +51,7 @@ class Quiz {
     required this.subjectId,
     required this.topicId,
     this.examTag,
+    this.description,
     this.questionCount,
     this.status = 'active',
     this.availableQuestions = 0,
@@ -103,6 +108,8 @@ class Quiz {
         'subjectId': subjectId,
         'topicId': topicId,
         'examTag': examTag,
+        if (description != null && description!.trim().isNotEmpty)
+          'description': description!.trim(),
         'questionCount': questionCount,
       };
 }
