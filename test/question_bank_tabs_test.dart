@@ -11,7 +11,6 @@ Widget _inTheDashboard() => MaterialApp(
         body: SingleChildScrollView(
           child: QuestionBankScreen(
             quizzes: SizedBox(height: 40, child: Text('quizzes panel')),
-            mockTests: SizedBox(height: 40, child: Text('mock tests panel')),
             import: SizedBox(height: 40, child: Text('import panel')),
           ),
         ),
@@ -25,8 +24,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Quizzes'), findsOneWidget);
-    expect(find.text('Mock tests'), findsOneWidget);
-    expect(find.text('Import from CSV'), findsOneWidget);
+    expect(find.text('Add quiz from CSV'), findsOneWidget);
     expect(find.text('quizzes panel'), findsOneWidget);
     expect(find.text('import panel'), findsNothing);
   });
@@ -34,15 +32,15 @@ void main() {
   testWidgets('a tap swaps which panel is shown', (tester) async {
     await tester.pumpWidget(_inTheDashboard());
 
-    await tester.tap(find.text('Import from CSV'));
+    await tester.tap(find.text('Add quiz from CSV'));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
     expect(find.text('import panel'), findsOneWidget);
     expect(find.text('quizzes panel'), findsNothing);
 
-    await tester.tap(find.text('Mock tests'));
+    await tester.tap(find.text('Quizzes'));
     await tester.pumpAndSettle();
-    expect(find.text('mock tests panel'), findsOneWidget);
+    expect(find.text('quizzes panel'), findsOneWidget);
   });
 }

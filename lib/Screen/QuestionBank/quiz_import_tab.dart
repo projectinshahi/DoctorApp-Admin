@@ -2,35 +2,57 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/theam/theam_dart.dart';
 import '../../models/admin_test_model.dart' show TestUploadIssue;
+import '../../models/course_types_model.dart';
 import '../../models/question_bank_model.dart';
+import '../../models/quiz_model.dart';
 import '../../models/sheet_row_model.dart';
+import '../../provider/course_get_provider.dart';
+import '../../services/course_details_service.dart';
+import '../../services/quiz_service.dart';
 import '../../services/file_download.dart';
 import '../../services/question_bank_service.dart';
 import '../../services/sheet_csv_service.dart';
 import '../../services/subject_topic_service.dart';
 import '../Test/test_error_table.dart';
 
-/// Filling the question bank from a CSV, the way a test is filled from one.
+/// Making a quiz out of a CSV, the way a mock test is made out of one.
 ///
-/// A bank question belongs to a **subject and topic**, never to a lesson -
-/// quizzes draw from the bank by subject, so that is the only scope this
-/// asks for. The file is read here rather than posted: there is no bulk
-/// import route, so each row is created through POST /api/questions, which
-/// is also why a half-finished import leaves what it already made.
-class QuestionImportTab extends StatefulWidget {
-  const QuestionImportTab({super.key});
+/// A quiz has no clock - that is what separates it from a test. What it has
+/// is a course and an exam it is for, a subject and topic its questions live
+/// under, and the questions themselves.
+///
+/// Three writes, in this order, because each needs the one before it:
+///   1. every row becomes a question in the bank   POST /api/questions
+///   2. the quiz                                   POST /api/quizzes
+///   3. those exact questions pinned to it         PUT  /admin/quizzes/:id/questions
+///
+/// Step 3 is what makes the quiz serve the file rather than everything that
+/// happens to share the topic. The file is read here rather than posted:
+/// there is no bulk import route, which is also why a half-finished import
+/// leaves the questions it already made.
+class QuizImportTab extends StatefulWidget {
+  const QuizImportTab({super.key});
 
   @override
-  State<QuestionImportTab> createState() => _QuestionImportTabState();
+  State<QuizImportTab> createState() => _QuizImportTabState();
 }
 
-class _QuestionImportTabState extends State<QuestionImportTab> {
+class _QuizImportTabState extends State<QuizImportTab> {
   final _taxonomy = SubjectTopicService();
   final _questions = QuestionBankService();
+  final _quizzes = QuizService();
+  final _courseDetails = CourseDetailsService();
   final _csv = SheetCsvService();
+  final _titleController = TextEditingController();
+
+  int? _courseId;
+  List<CourseTypeSummary> _types = const [];
+  int? _courseTypeId;
+  bool _loadingTypes = false;
 
   List<Subject> _subjects = const [];
   List<Topic> _topics = const [];
@@ -47,6 +69,10 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
 
   /// How many rows have been sent, while sending. Null when idle.
   int? _importedSoFar;
+
+  /// The quiz the import built, once it exists, and whatever stopped it.
+  Quiz? _quiz;
+  String? _quizError;
   int _created = 0;
   List<TestUploadIssue> _failures = const [];
   bool _done = false;
@@ -55,6 +81,48 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
   void initState() {
     super.initState();
     _loadSubjects();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final provider = context.read<CourseListGetProvider>();
+      if (provider.courses.isEmpty) await provider.fetchCourses(limit: 100);
+      if (!mounted || _courseId != null) return;
+      final first =
+          provider.courses.isEmpty ? null : provider.courses.first.id;
+      if (first != null) await _selectCourse(first);
+    });
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    super.dispose();
+  }
+
+  /// The course decides which exams are on offer; the exam is what the quiz
+  /// is tagged with, so a student sitting DHA is not shown the MOHAP quiz.
+  Future<void> _selectCourse(int courseId) async {
+    setState(() {
+      _courseId = courseId;
+      _courseTypeId = null;
+      _types = const [];
+      _loadingTypes = true;
+    });
+
+    try {
+      final response = await _courseDetails.fetchCourseTypes(courseId);
+      if (!mounted || _courseId != courseId) return;
+      setState(() {
+        _loadingTypes = false;
+        _types = response.courseTypes;
+        _courseTypeId = _types.isEmpty ? null : _types.first.id;
+      });
+    } catch (e) {
+      if (!mounted || _courseId != courseId) return;
+      setState(() {
+        _loadingTypes = false;
+        _taxonomyError = 'Could not load this course\'s exams: $e';
+      });
+    }
   }
 
   Future<void> _loadSubjects() async {
@@ -130,6 +198,8 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
     _importedSoFar = null;
     _created = 0;
     _failures = const [];
+    _quiz = null;
+    _quizError = null;
     _done = false;
   }
 
@@ -138,9 +208,22 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
   bool get _canImport =>
       _subjectId != null &&
       _topicId != null &&
+      _titleController.text.trim().isNotEmpty &&
       _rows.isNotEmpty &&
       !_issues.any((i) => !i.isWarning) &&
       _importedSoFar == null;
+
+  /// What stopped the button being pressable, or null when nothing does.
+  String? get _blockedBecause {
+    if (_subjectId == null || _topicId == null) {
+      return 'Pick a subject and a topic first.';
+    }
+    if (_titleController.text.trim().isEmpty) {
+      return 'Give the quiz a title.';
+    }
+    if (_rows.isEmpty) return 'Choose a CSV file.';
+    return null;
+  }
 
   Future<void> _import() async {
     if (!_canImport) return;
@@ -153,7 +236,7 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
     });
 
     final failures = <TestUploadIssue>[];
-    var created = 0;
+    final createdIds = <int>[];
 
     for (var i = 0; i < _rows.length; i++) {
       final row = _rows[i];
@@ -162,8 +245,9 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
       );
       if (!mounted) return;
 
-      if (result.isSuccess) {
-        created++;
+      final id = result.question?.id;
+      if (result.isSuccess && id != null) {
+        createdIds.add(id);
       } else {
         failures.add(TestUploadIssue(
           row: row.sourceRow,
@@ -174,15 +258,66 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
 
       setState(() {
         _importedSoFar = i + 1;
-        _created = created;
+        _created = createdIds.length;
       });
     }
 
     if (!mounted) return;
+    setState(() => _importedSoFar = null);
+
+    if (createdIds.isNotEmpty) {
+      await _buildQuiz(createdIds, subjectId: subjectId, topicId: topicId);
+    }
+
+    if (!mounted) return;
     setState(() {
-      _importedSoFar = null;
       _failures = failures;
       _done = true;
+    });
+  }
+
+  /// The quiz over the questions just made, serving those and nothing else.
+  ///
+  /// Pinning is a second call: a quiz created from a subject and topic alone
+  /// is a filter, and would serve every other question that shares them.
+  Future<void> _buildQuiz(
+    List<int> questionIds, {
+    required int subjectId,
+    required int topicId,
+  }) async {
+    final exam = _types.where((t) => t.id == _courseTypeId).firstOrNull;
+
+    final created = await _quizzes.create(Quiz(
+      id: 0,
+      title: _titleController.text.trim(),
+      subjectId: subjectId,
+      topicId: topicId,
+      examTag: exam?.title,
+      // Left to the server: a pinned quiz serves what it is given.
+      questionCount: null,
+    ));
+    if (!mounted) return;
+
+    final quiz = created.quiz;
+    if (!created.isSuccess || quiz == null) {
+      setState(() => _quizError =
+          created.errorMessage ?? 'The questions were saved, but the quiz '
+              'could not be created');
+      return;
+    }
+
+    final pinned = await _quizzes.setQuestionSet(
+      quizId: quiz.id,
+      questionIds: questionIds,
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _quiz = quiz;
+      _quizError = pinned.isSuccess
+          ? null
+          : pinned.errorMessage ??
+              'The quiz was created, but its questions could not be pinned';
     });
   }
 
@@ -195,13 +330,13 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Add questions from a CSV',
+          const Text('Add a quiz from a CSV',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           const Text(
-            'The questions go into the bank under one subject and topic. '
-            'Quizzes draw from there, so nothing here is attached to a '
-            'lesson.',
+            'The rows become questions in the bank, and the quiz serves '
+            'exactly those. A quiz is untimed - students take it at their own '
+            'pace. A paper with a clock on it is a test, not a quiz.',
             style: TextStyle(
                 fontSize: 12.5, height: 1.4, color: LmsColors.textGrey),
           ),
@@ -209,25 +344,39 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
 
           _card(
             step: '1',
+            title: 'Which course and exam',
+            child: _coursePickers(),
+          ),
+          const SizedBox(height: 12),
+
+          _card(
+            step: '2',
             title: 'Where the questions belong',
             child: _scopePickers(),
           ),
           const SizedBox(height: 12),
 
           _card(
-            step: '2',
+            step: '3',
+            title: 'The quiz',
+            child: _quizDetails(),
+          ),
+          const SizedBox(height: 12),
+
+          _card(
+            step: '4',
             title: 'The file',
             child: _filePicker(),
           ),
 
           if (_rows.isNotEmpty || _fileError != null) ...[
             const SizedBox(height: 12),
-            _card(step: '3', title: 'What the file says', child: _review()),
+            _card(step: '5', title: 'What the file says', child: _review()),
           ],
 
           if (_done) ...[
             const SizedBox(height: 12),
-            _card(step: '4', title: 'Result', child: _result()),
+            _card(step: '6', title: 'Result', child: _result()),
           ],
         ],
       ),
@@ -274,6 +423,97 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
             child,
           ],
         ),
+      );
+
+  Widget _coursePickers() {
+    final courses = context.watch<CourseListGetProvider>().courses;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 420,
+          child: DropdownButtonFormField<int>(
+            initialValue: _courseId,
+            isExpanded: true,
+            decoration: _fieldDecoration('Course'),
+            items: [
+              for (final course in courses)
+                DropdownMenuItem(value: course.id, child: Text(course.title)),
+            ],
+            onChanged: _importedSoFar != null
+                ? null
+                : (value) {
+                    if (value != null) _selectCourse(value);
+                  },
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (_loadingTypes)
+          const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2))
+        else if (_types.isEmpty)
+          const Text('This course has no exams yet. The quiz will not be '
+              'tagged with one.',
+              style: TextStyle(fontSize: 12, color: LmsColors.textGrey))
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final type in _types)
+                ChoiceChip(
+                  label: Text(type.title),
+                  selected: type.id == _courseTypeId,
+                  onSelected: _importedSoFar != null
+                      ? null
+                      : (_) => setState(() => _courseTypeId = type.id),
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: type.id == _courseTypeId
+                        ? Colors.white
+                        : LmsColors.textDark,
+                  ),
+                  selectedColor: LmsColors.primary,
+                  backgroundColor: LmsColors.bg,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                        color: type.id == _courseTypeId
+                            ? Colors.transparent
+                            : LmsColors.border),
+                  ),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _quizDetails() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 420,
+            child: TextField(
+              controller: _titleController,
+              enabled: _importedSoFar == null,
+              onChanged: (_) => setState(() {}),
+              style: const TextStyle(fontSize: 13.5),
+              decoration:
+                  _fieldDecoration('Quiz title, as students see it'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'No duration: a quiz is not timed. Set a time limit by making a '
+            'test instead.',
+            style: TextStyle(fontSize: 12, color: LmsColors.textGrey),
+          ),
+        ],
       );
 
   Widget _scopePickers() {
@@ -448,8 +688,8 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
           ElevatedButton.icon(
             onPressed: _canImport ? _import : null,
             icon: const Icon(Icons.playlist_add_rounded, size: 18),
-            label: Text('Add ${_rows.length} question'
-                '${_rows.length == 1 ? '' : 's'} to the bank'),
+            label: Text('Create the quiz from ${_rows.length} question'
+                '${_rows.length == 1 ? '' : 's'}'),
             style: ElevatedButton.styleFrom(
               backgroundColor: LmsColors.success,
               foregroundColor: Colors.white,
@@ -458,10 +698,11 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
                   RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
           ),
-        if (!_canImport && _importedSoFar == null && blocking == 0) ...[
+        if (_importedSoFar == null && blocking == 0 && _blockedBecause != null) ...[
           const SizedBox(height: 8),
-          const Text('Pick a subject and a topic first.',
-              style: TextStyle(fontSize: 12, color: LmsColors.textGrey)),
+          Text(_blockedBecause!,
+              style: const TextStyle(
+                  fontSize: 12, color: LmsColors.textGrey)),
         ],
       ],
     );
@@ -514,26 +755,39 @@ class _QuestionImportTabState extends State<QuestionImportTab> {
 
   Widget _result() {
     final failed = _failures.length;
+    final ok = failed == 0 && _quiz != null && _quizError == null;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
             Icon(
-                failed == 0
+                ok
                     ? Icons.check_circle_rounded
                     : Icons.error_outline_rounded,
                 size: 18,
-                color: failed == 0 ? LmsColors.success : LmsColors.error),
+                color: ok ? LmsColors.success : LmsColors.error),
             const SizedBox(width: 7),
-            Text(
-              '$_created added'
-              '${failed == 0 ? '' : ', $failed refused'}',
-              style: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w800),
+            Expanded(
+              child: Text(
+                _quiz == null
+                    ? '$_created question${_created == 1 ? '' : 's'} added, no '
+                        'quiz made'
+                    : '"${_quiz!.title}" serves $_created question'
+                        '${_created == 1 ? '' : 's'}'
+                        '${failed == 0 ? '' : ', $failed refused'}',
+                style: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w800),
+              ),
             ),
           ],
         ),
+        if (_quizError != null) ...[
+          const SizedBox(height: 8),
+          Text(_quizError!,
+              style: const TextStyle(fontSize: 12.5, color: LmsColors.error)),
+        ],
         if (failed > 0) ...[
           const SizedBox(height: 10),
           // The rows that did go in are already saved: this import cannot be

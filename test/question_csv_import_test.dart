@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:admin_drapp/Screen/QuestionBank/question_import_tab.dart';
+import 'package:admin_drapp/Screen/QuestionBank/quiz_import_tab.dart';
 import 'package:admin_drapp/models/question_bank_model.dart';
 import 'package:admin_drapp/services/sheet_csv_service.dart';
 
