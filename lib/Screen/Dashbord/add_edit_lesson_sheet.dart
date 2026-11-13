@@ -1250,13 +1250,14 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
-                  // Notes lessons can no longer be created here. A lesson that
+                  // Notes and quiz lessons can no longer be created here -
+                  // questions come from Question Bank now. A lesson that
                   // already is one keeps its chip, so editing it shows what it
                   // is instead of quietly turning it into a video lesson.
                   children: LessonType.values
                       .where((t) =>
-                          t != LessonType.text ||
-                          widget.initialType == LessonType.text)
+                          t == LessonType.video ||
+                          widget.initialType == t)
                       .map((t) {
                     final isSelected = t == _type;
                     return ChoiceChip(
