@@ -8,11 +8,7 @@ import '../../provider/lesson_upload_provider.dart';
 import '../../services/lesson_services.dart';
 import '../../services/lesson_upload_service.dart';
 import '../../models/lesson_detail_model.dart';
-import '../../models/quiz_model.dart';
-import '../../services/quiz_service.dart';
 import '../../services/question_image_service.dart';
-import '../../services/sheet_question_sync_service.dart';
-import '../../widget/sheet_quiz_picker.dart';
 import '../../widget/video_access_switch.dart';
 import '../../widget/video_row_fields.dart';
 import '../../widget/video_status_switch.dart';
@@ -329,77 +325,6 @@ class _UploadBadge extends StatelessWidget {
         ),
         child: Icon(icon, size: size * 0.48, color: color),
       );
-}
-
-/// Who can open this lesson's quiz, notes and text.
-///
-/// Not its videos: each of those carries its own free/premium, and a free
-/// part inside a premium lesson is the sample. This switch stopped being
-/// about the lesson as a whole the day that shipped.
-class _FreeSwitch extends StatelessWidget {
-  final bool isFree;
-
-  /// On a premium course a ticked box is a free preview of the quiz, which is
-  /// worth naming.
-  final bool coursePremium;
-  final ValueChanged<bool> onChanged;
-
-  const _FreeSwitch({
-    required this.isFree,
-    required this.coursePremium,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () => onChanged(!isFree),
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 22,
-              height: 22,
-              child: Checkbox(
-                value: isFree,
-                onChanged: (v) => onChanged(v ?? false),
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                activeColor: LmsColors.primary,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                      coursePremium && isFree
-                          ? 'Quiz access: free preview'
-                          : 'Quiz access: free for everyone',
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 2),
-                  Text(
-                    isFree
-                        ? 'Any student can take this quiz, subscribed or not. '
-                            'Each video sets its own access separately.'
-                        : 'Premium. A student needs a subscription whose plan '
-                            'includes quizzes. Videos are set one by one.',
-                    style: const TextStyle(
-                        fontSize: 12, height: 1.35, color: LmsColors.textGrey),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _FieldLabel extends StatelessWidget {
@@ -719,23 +644,15 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   //   lesson   -> what a student opens              PUT  /api/lessons/:id
   // Skipping the third leaves a quiz no student can reach, which is why the
   // save always links as well as creates.
-  final _quizService = QuizService();
 
-  final _syncService = SheetQuestionSyncService();
 
   /// What the picker currently has, read live from the spreadsheet. Null on an
-  /// edit that left the existing link alone, which is why [_linkedQuizId] is
-  /// tracked separately.
-  SheetQuizSelection? _quizDraft;
 
   /// Progress line while the selected rows are pushed into the bank.
-  String? _syncStatus;
 
   /// The quiz already on this lesson. Kept when the admin doesn't re-pick.
   int? _linkedQuizId;
 
-  bool _isCreatingQuiz = false;
-  String? _quizValidationError;
 
   bool get _isQuiz => _type == LessonType.quiz;
 
@@ -983,140 +900,17 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
   /// lesson, so this only has to rebuild.
   void _onTypeChanged(LessonType type) {
     if (type == _type) return;
-    setState(() {
-      _type = type;
-      _quizValidationError = null;
-    });
+    setState(() => _type = type);
   }
 
-  void _onQuizDraftChanged(SheetQuizSelection? draft) {
-    setState(() {
-      _quizDraft = draft;
-      if (draft != null) _quizValidationError = null;
-    });
-  }
-
-  /// Carries the picked spreadsheet rows into the API, then builds the quiz
-  /// that serves them.
-  ///
-  /// Three writes, in an order the later ones depend on:
-  ///   1. the sheet's subject/topic names resolve to database ids
-  ///      (POST /api/subjects, POST /api/subjects/:id/topics when missing)
-  ///   2. each picked row becomes a question    POST /api/questions
-  ///   3. a quiz filters that subject + topic   POST /api/quizzes
-  /// The lesson then links the quiz, which is what makes it reachable to a
-  /// student. Returns null when any step failed, so the save aborts instead of
-  /// writing a quiz lesson that serves nothing.
-  Future<int?> _syncAndCreateQuiz(
-      SheetQuizSelection selection, String lessonTitle) async {
-    setState(() {
-      _isCreatingQuiz = true;
-      _syncStatus = 'Reading "${selection.tab}" and saving its questions...';
-      _quizValidationError = null;
-    });
-
-    final sync = await _syncService.sync(
-      subjectName: selection.subject,
-      topicName: selection.topic,
-      rows: selection.questions,
-    );
-
-    if (!mounted) return null;
-
-    if (!sync.isSuccess) {
-      setState(() {
-        _isCreatingQuiz = false;
-        _syncStatus = null;
-        _quizValidationError = sync.errorMessage;
-      });
-      return null;
-    }
-
-    // Every row was rejected, so the quiz would filter over nothing.
-    if (sync.total == 0) {
-      setState(() {
-        _isCreatingQuiz = false;
-        _syncStatus = null;
-        _quizValidationError = sync.skipped.isEmpty
-            ? 'No questions were saved, so this quiz would serve nothing.'
-            : 'None of the selected rows could be saved:\n'
-                '${sync.skipped.take(3).join('\n')}';
-      });
-      return null;
-    }
-
-    setState(() => _syncStatus =
-        '${sync.created} saved, ${sync.alreadyPresent} already there. '
-        'Creating the quiz...');
-
-    final result = await _quizService.create(Quiz(
-      id: 0, // server-assigned; toPayload() never sends it
-      title: lessonTitle.isEmpty ? selection.tab : lessonTitle,
-      subjectId: sync.subjectId!,
-      topicId: sync.topicId!,
-      questionCount: sync.total,
-    ));
-
-    if (!mounted) return null;
-    setState(() {
-      _isCreatingQuiz = false;
-      _syncStatus = null;
-    });
-
-    if (result.isSuccess && result.quiz != null) {
-      if (sync.skipped.isNotEmpty) {
-        _showSkipped(sync.skipped);
-      }
-      return result.quiz!.id;
-    }
-
-    setState(() => _quizValidationError =
-        result.errorMessage ?? 'Failed to create the quiz');
-    return null;
-  }
-
-  /// Rows the API refused. The lesson still saved, so this is a notice rather
-  /// than an error - but a silently missing question is invisible.
-  void _showSkipped(List<String> skipped) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 8),
-        backgroundColor: LmsColors.error,
-        content: Text(
-          '${skipped.length} sheet row${skipped.length == 1 ? '' : 's'} '
-          'could not be saved:\n${skipped.take(3).join('\n')}'
-          '${skipped.length > 3 ? '\n...and ${skipped.length - 3} more' : ''}',
-          style: const TextStyle(fontSize: 12.5),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _handleSave() async {
+    Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
     if (_isUploadingThumbnail || _isUploadingNote) return;
 
-    if (_isCreatingQuiz) return;
 
     final provider = context.read<LessonUpdateProvider>();
     final title = _titleController.text.trim();
 
-    // A quiz-type lesson still has to point at a quiz — that is the whole of
-    // what it serves. On any other type the quiz is an extra, so an empty
-    // picker is not an error.
-    if (_isQuiz && _quizDraft == null && _linkedQuizId == null) {
-      setState(() => _quizValidationError =
-          'Pick a subject and topic with at least one active question.');
-      return;
-    }
-    // Built whenever the picker has something, whatever the lesson leads
-    // with: a video lesson can carry a quiz now.
-    final draft = _quizDraft;
-    if (draft != null) {
-      final quizId = await _syncAndCreateQuiz(draft, title);
-      if (quizId == null) return; // message already on screen
-      _linkedQuizId = quizId;
-    }
     // Free on a premium course is a free preview: same tick, and the server
     // reads two fields. Sent on every save, true and false alike - omitting it
     // on an edit would leave a lesson open after it was switched to premium.
@@ -1260,13 +1054,11 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
               VideoAccessSwitch(
                 free: draft.free,
                 coursePremium: widget.coursePremium ?? false,
-                enabled: !_isCreatingQuiz,
                 onChanged: (free) => setState(() => draft.free = free),
               ),
               VideoStatusSwitch(
                 published: draft.published,
                 lockedByLesson: !_lessonPublished,
-                enabled: !_isCreatingQuiz,
                 onChanged: (published) =>
                     setState(() => draft.published = published),
               ),
@@ -1321,7 +1113,7 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
           VideoThumbnailField(
             controller: draft.thumbnail,
             uploading: _uploadingVideoThumbAt == index,
-            enabled: !_isCreatingQuiz,
+            enabled: true,
             onUpload: () => _pickVideoThumbnail(index),
             onChanged: () => setState(() {}),
             decoration: (hint) => _inputDecoration(hint),
@@ -1486,84 +1278,6 @@ class _AddEditLessonSheetState extends State<_AddEditLessonSheet> {
                   }).toList(),
                 ),
                 const SizedBox(height: 18),
-
-                // Only on a quiz lesson. A video lesson is a video and its
-                // cover - the picker in the middle of that form was a question
-                // nobody adding a class wanted to answer.
-                if (_isQuiz) ...[
-                  const SizedBox(height: 18),
-                  // The lesson's own access covers its quiz, its notes and
-                  // its text - not its videos. Each video carries its own.
-                  _FreeSwitch(
-                    isFree: _accessType == LessonAccessType.free,
-                    coursePremium: widget.coursePremium ?? false,
-                    onChanged: (free) => setState(() => _accessType = free
-                        ? LessonAccessType.free
-                        : LessonAccessType.premium),
-                  ),
-                  const SizedBox(height: 18),
-
-                  _FieldLabel(_isQuiz ? 'Quiz' : 'Quiz (optional)'),
-                  const SizedBox(height: 2),
-                  Text(
-                    _isQuiz
-                        ? 'The questions this lesson serves.'
-                        : 'A quiz students take inside this lesson, after the '
-                            'videos.',
-                    style: const TextStyle(
-                        fontSize: 11.5, color: LmsColors.textGrey),
-                  ),
-                  if (_linkedQuizId != null) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.quiz_outlined,
-                            size: 16, color: LmsColors.primary),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            widget.initialQuizTitle ?? 'Quiz #$_linkedQuizId',
-                            style: const TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () =>
-                              setState(() => _linkedQuizId = null),
-                          child: const Text('Remove',
-                              style: TextStyle(
-                                  fontSize: 12.5, color: LmsColors.error)),
-                        ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  SheetQuizPicker(
-                    onChanged: _onQuizDraftChanged,
-                    validationError: _quizValidationError,
-                  ),
-                  if (_syncStatus != null) ...[
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _syncStatus!,
-                            style: const TextStyle(
-                                fontSize: 12, color: LmsColors.textGrey),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                ],
 
                 // Not on a quiz lesson. What a quiz serves is its questions;
                 // an icon and a video link in the same form are two
