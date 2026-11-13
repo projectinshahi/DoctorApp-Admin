@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theam/theam_dart.dart';
+import '../Test/test_list_screen.dart';
 import 'course_quiz_screen.dart';
 import 'question_import_tab.dart';
 
-/// The Question Bank section: the quizzes built from the bank, and the way
-/// questions get into it.
+/// The Question Bank section: everything a set of questions becomes, and the
+/// ways questions get in.
 ///
-/// Two tabs rather than one screen because the two work at different scopes.
-/// A quiz belongs to a course and an exam; a bank question belongs to a
-/// subject and a topic and knows nothing about either.
+/// Three tabs rather than one screen because they work at different scopes.
+/// A quiz and a mock test belong to a course and an exam; a bank question
+/// belongs to a subject and a topic and knows nothing about either.
+///
+/// Mock tests are the Tests screen itself, not a copy of it: the same course
+/// and exam pickers, the same wizard behind them - details and instructions
+/// PDF, then the questions CSV, then the review before anything publishes.
+/// Two screens that drift apart would be two different answers to "what did
+/// I upload".
 class QuestionBankScreen extends StatelessWidget {
   final int? initialCourseId;
   final int? initialCourseTypeId;
@@ -23,7 +30,7 @@ class QuestionBankScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -49,6 +56,11 @@ class QuestionBankScreen extends StatelessWidget {
                     text: 'Quizzes'),
                 Tab(
                     height: 46,
+                    icon: Icon(Icons.fact_check_outlined, size: 17),
+                    iconMargin: EdgeInsets.zero,
+                    text: 'Mock tests'),
+                Tab(
+                    height: 46,
                     icon: Icon(Icons.upload_file_rounded, size: 17),
                     iconMargin: EdgeInsets.zero,
                     text: 'Import from CSV'),
@@ -62,6 +74,7 @@ class QuestionBankScreen extends StatelessWidget {
                   initialCourseId: initialCourseId,
                   initialCourseTypeId: initialCourseTypeId,
                 ),
+                const TestListScreen(),
                 const QuestionImportTab(),
               ],
             ),
