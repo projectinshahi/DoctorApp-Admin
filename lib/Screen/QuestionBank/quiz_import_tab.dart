@@ -66,6 +66,14 @@ class _QuizImportTabState extends State<QuizImportTab> {
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
 
+  /// Only for files whose rows do not carry a subject and topic of their
+  /// own. A file that says is never asked.
+  List<Subject> _subjects = const [];
+  List<Topic> _topics = const [];
+  int? _fallbackSubjectId;
+  int? _fallbackTopicId;
+  bool _loadingScope = false;
+
   int? _courseId;
   List<CourseTypeSummary> _types = const [];
   int? _courseTypeId;
@@ -107,6 +115,47 @@ class _QuizImportTabState extends State<QuizImportTab> {
     _titleController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  /// True when at least one row leaves it to the screen to say where it
+  /// belongs.
+  bool get _needsFallbackScope => _rows.any((r) =>
+      r.subjectName.trim().isEmpty || r.topicName.trim().isEmpty);
+
+  bool get _hasFallbackScope =>
+      _fallbackSubjectId != null && _fallbackTopicId != null;
+
+  Future<void> _loadSubjects() async {
+    if (_subjects.isNotEmpty || _loadingScope) return;
+    setState(() => _loadingScope = true);
+    final result = await _taxonomy.getSubjects();
+    if (!mounted) return;
+    setState(() {
+      _loadingScope = false;
+      if (result.isSuccess) {
+        _subjects = result.subjects ?? const [];
+      } else {
+        _loadError = result.errorMessage;
+      }
+    });
+  }
+
+  Future<void> _loadTopics(int subjectId) async {
+    setState(() {
+      _loadingScope = true;
+      _topics = const [];
+      _fallbackTopicId = null;
+    });
+    final result = await _taxonomy.getTopics(subjectId: subjectId);
+    if (!mounted) return;
+    setState(() {
+      _loadingScope = false;
+      if (result.isSuccess) {
+        _topics = result.topics ?? const [];
+      } else {
+        _loadError = result.errorMessage;
+      }
+    });
   }
 
   /// The course decides which exams are on offer; the exam is what the quiz
@@ -164,13 +213,19 @@ class _QuizImportTabState extends State<QuizImportTab> {
       setState(() {
         _rows = parsed;
         _choices = [for (final row in parsed) choiceFor(row)];
-        _issues = validateQuestions(parsed);
+        _issues = validateQuestions(parsed,
+            scopeChosenOnScreen: _hasFallbackScope);
       });
+      if (_needsFallbackScope) await _loadSubjects();
     } on SheetCsvException catch (e) {
       if (!mounted) return;
       setState(() => _fileError = e.message);
     }
   }
+
+  /// Re-run after anything that changes whether a row is complete.
+  void _revalidate() => setState(() => _issues =
+      validateQuestions(_rows, scopeChosenOnScreen: _hasFallbackScope));
 
   void _resetResult() {
     _importedSoFar = null;
@@ -185,6 +240,7 @@ class _QuizImportTabState extends State<QuizImportTab> {
 
   bool get _canImport =>
       _titleController.text.trim().isNotEmpty &&
+      (!_needsFallbackScope || _hasFallbackScope) &&
       _rows.isNotEmpty &&
       !_issues.any((i) => !i.isWarning) &&
       _importedSoFar == null;
@@ -193,6 +249,9 @@ class _QuizImportTabState extends State<QuizImportTab> {
   String? get _blockedBecause {
     if (_titleController.text.trim().isEmpty) return 'Give the quiz a title.';
     if (_rows.isEmpty) return 'Choose a CSV file.';
+    if (_needsFallbackScope && !_hasFallbackScope) {
+      return 'Say which subject and topic the file belongs to.';
+    }
     return null;
   }
 
@@ -293,6 +352,12 @@ class _QuizImportTabState extends State<QuizImportTab> {
   /// The ids a row's subject and topic names resolve to, created on the way
   /// when they are new. Cached, so a file of 60 rows in one topic asks once.
   Future<_Scope?> _scopeFor(SheetQuestion row, Map<String, _Scope> cache) async {
+    if (row.subjectName.trim().isEmpty || row.topicName.trim().isEmpty) {
+      return _hasFallbackScope
+          ? _Scope(subjectId: _fallbackSubjectId!, topicId: _fallbackTopicId!)
+          : null;
+    }
+
     final key = '${row.subjectName.toLowerCase()}/${row.topicName.toLowerCase()}';
     final known = cache[key];
     if (known != null) return known;
@@ -642,8 +707,12 @@ class _QuizImportTabState extends State<QuizImportTab> {
           TestErrorTable(issues: _issues, nothingWasSaved: blocking > 0),
           const SizedBox(height: 12),
         ],
+        if (_needsFallbackScope) ...[
+          _fallbackPickers(),
+          const SizedBox(height: 12),
+        ],
         _setAllRow(),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         for (var i = 0; i < _rows.length; i++) _reviewRow(i),
         const SizedBox(height: 14),
         if (_importedSoFar != null)
@@ -687,38 +756,168 @@ class _QuizImportTabState extends State<QuizImportTab> {
     );
   }
 
-  /// Sixty rows set one at a time is not a review, it is data entry.
-  Widget _setAllRow() => Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
+  /// Where rows that do not say belong. A file that says is never asked.
+  Widget _fallbackPickers() => Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF6EC),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFF2D6AE)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This file does not say which subject and topic its questions '
+              'are under. Choose one for the whole file.',
+              style: TextStyle(fontSize: 12, height: 1.35),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 12,
+              runSpacing: 10,
+              children: [
+                SizedBox(
+                  width: 240,
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _fallbackSubjectId,
+                    isExpanded: true,
+                    decoration: _fieldDecoration(
+                        _loadingScope ? 'Loading…' : 'Subject'),
+                    items: [
+                      for (final subject in _subjects)
+                        DropdownMenuItem(
+                            value: subject.id, child: Text(subject.name)),
+                    ],
+                    onChanged: _importedSoFar != null
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() => _fallbackSubjectId = value);
+                            _loadTopics(value).then((_) => _revalidate());
+                          },
+                  ),
+                ),
+                SizedBox(
+                  width: 240,
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _fallbackTopicId,
+                    isExpanded: true,
+                    decoration: _fieldDecoration(_fallbackSubjectId == null
+                        ? 'Topic — pick a subject first'
+                        : 'Topic'),
+                    items: [
+                      for (final topic in _topics)
+                        DropdownMenuItem(
+                            value: topic.id, child: Text(topic.name)),
+                    ],
+                    onChanged: _topics.isEmpty || _importedSoFar != null
+                        ? null
+                        : (value) {
+                            setState(() => _fallbackTopicId = value);
+                            _revalidate();
+                          },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+  /// Sixty rows set one at a time is not a review, it is data entry - so the
+  /// whole file moves together here, and a row that differs is tapped.
+  Widget _setAllRow() {
+    final allFree = _choices.every((c) => c.free);
+    final allPremium = _choices.every((c) => !c.free);
+    final allPublished = _choices.every((c) => c.published);
+    final allDraft = _choices.every((c) => !c.published);
+
+    return Wrap(
+      spacing: 18,
+      runSpacing: 10,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _segment(
+          label: 'All questions',
+          left: 'Free',
+          right: 'Premium',
+          leftOn: allFree,
+          rightOn: allPremium,
+          colour: const Color(0xFF14A38B),
+          onLeft: () => _setAll(free: true),
+          onRight: () => _setAll(free: false),
+        ),
+        _segment(
+          label: 'All at once',
+          left: 'Published',
+          right: 'Draft',
+          leftOn: allPublished,
+          rightOn: allDraft,
+          colour: LmsColors.success,
+          onLeft: () => _setAll(published: true),
+          onRight: () => _setAll(published: false),
+        ),
+      ],
+    );
+  }
+
+  /// Two halves of one choice. Neither half is lit when the rows disagree -
+  /// that is the honest answer to "what are they all set to".
+  Widget _segment({
+    required String label,
+    required String left,
+    required String right,
+    required bool leftOn,
+    required bool rightOn,
+    required Color colour,
+    required VoidCallback onLeft,
+    required VoidCallback onRight,
+  }) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('Set all:',
-              style: TextStyle(
-                  fontSize: 12,
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w700,
                   color: LmsColors.textGrey)),
-          _setAllButton('Free', () => _setAll(free: true)),
-          _setAllButton('Premium', () => _setAll(free: false)),
-          _setAllButton('Published', () => _setAll(published: true)),
-          _setAllButton('Draft', () => _setAll(published: false)),
+          const SizedBox(height: 4),
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: LmsColors.border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _segmentHalf(left, leftOn, colour, onLeft),
+                Container(width: 1, height: 26, color: LmsColors.border),
+                _segmentHalf(right, rightOn, LmsColors.primary, onRight),
+              ],
+            ),
+          ),
         ],
       );
 
-  Widget _setAllButton(String label, VoidCallback onTap) => OutlinedButton(
-        onPressed: _importedSoFar != null ? null : onTap,
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          foregroundColor: LmsColors.textDark,
-          side: const BorderSide(color: LmsColors.border),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+  Widget _segmentHalf(
+          String label, bool on, Color colour, VoidCallback onTap) =>
+      InkWell(
+        onTap: _importedSoFar != null ? null : onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          color: on ? colour : Colors.white,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+              color: on ? Colors.white : LmsColors.textGrey,
+            ),
+          ),
         ),
-        child: Text(label,
-            style:
-                const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
       );
 
   void _setAll({bool? free, bool? published}) => setState(() {
@@ -996,19 +1195,25 @@ RowChoice choiceFor(SheetQuestion row) => RowChoice(
 /// The server checks its own rules again; this is about catching the whole
 /// file in one look rather than discovering line 40 after 39 questions are
 /// already in the bank.
-List<TestUploadIssue> validateQuestions(List<SheetQuestion> questions) {
+List<TestUploadIssue> validateQuestions(
+  List<SheetQuestion> questions, {
+  /// The screen is standing in for the rows that do not say where they
+  /// belong, so their silence is no longer a problem.
+  bool scopeChosenOnScreen = false,
+}) {
   final issues = <TestUploadIssue>[];
 
   for (final question in questions) {
-    // The subject and topic are the file's job now: nothing on screen says
-    // where a row belongs, so a row that does not say either cannot be saved.
-    if (question.subjectName.trim().isEmpty ||
-        question.topicName.trim().isEmpty) {
+    // A row says where it belongs, or the screen says for the whole file.
+    // With neither, there is nowhere to put it.
+    if (!scopeChosenOnScreen &&
+        (question.subjectName.trim().isEmpty ||
+            question.topicName.trim().isEmpty)) {
       issues.add(TestUploadIssue(
         row: question.sourceRow,
         field: 'subject, topic',
-        message: 'Missing — every row says which subject and topic it is '
-            'under',
+        message: 'Missing — add subject and topic columns, or choose them '
+            'for the whole file below',
       ));
     }
 

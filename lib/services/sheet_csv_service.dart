@@ -86,11 +86,22 @@ class SheetCsvService {
       final options = <String>[];
       final optionImages = <String?>[];
 
+      // Two spellings in the wild: option1..option6 the way a sheet writes
+      // them, option_a..option_f the way a printed paper does. Both say the
+      // same thing, and refusing one of them is refusing the admin's file.
       for (var n = 1; n <= 6; n++) {
-        final optionText = cell('option$n');
+        final letter = String.fromCharCode(96 + n); // a, b, c...
+        final optionText = _first([
+          cell('option$n'),
+          cell('option_$letter'),
+          cell('option${letter.toUpperCase()}'),
+        ]);
         if (optionText.isEmpty) continue;
         options.add(optionText);
-        final image = cell('option${n}_image_url');
+        final image = _first([
+          cell('option${n}_image_url'),
+          cell('option_${letter}_image_url'),
+        ]);
         optionImages.add(image.isEmpty ? null : image);
       }
 
@@ -129,6 +140,10 @@ class SheetCsvService {
     return questions;
   }
 }
+
+/// The first of these that says anything.
+String _first(List<String> values) =>
+    values.firstWhere((v) => v.trim().isNotEmpty, orElse: () => '').trim();
 
 /// The answer column, as a number or as the letter a paper writes it with.
 ///

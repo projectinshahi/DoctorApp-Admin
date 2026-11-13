@@ -41,6 +41,23 @@ void main() {
       expect(validateQuestions(parsed), isEmpty);
     });
 
+    test('a paper written with option_a..option_f reads the same', () {
+      final paper = SheetCsvService().parseCsv(
+        'question_order,question_text,option_a,option_b,option_c,option_d,'
+        'option_e,option_f,correct_option,subject,topic\n'
+        '1,Which nerve supplies the diaphragm?,Vagus,Phrenic,Radial,Ulnar,,,'
+        'B,Anatomy,Thorax\n'
+        '2,Normal serum potassium?,2-3,3.5-5,5.5-7,7.5-9,9.5-11,,2,'
+        'Biochemistry,Electrolytes\n',
+      );
+
+      expect(paper.first.options,
+          ['Vagus', 'Phrenic', 'Radial', 'Ulnar']);
+      expect(paper.first.correctOption, 2);
+      expect(paper.last.options, hasLength(5));
+      expect(validateQuestions(paper), isEmpty);
+    });
+
     test('a row that does not say where it belongs is refused', () {
       final issues = validateQuestions(SheetCsvService().parseCsv(
         'question_text,option1,option2,option3,option4,correct_option\n'
@@ -49,6 +66,15 @@ void main() {
 
       expect(issues.single.field, 'subject, topic');
       expect(issues.single.isWarning, isFalse);
+    });
+
+    test('unless the screen says where the whole file belongs', () {
+      final rows = SheetCsvService().parseCsv(
+        'question_text,option1,option2,option3,option4,correct_option\n'
+        'Belongs nowhere,A,B,C,D,1\n',
+      );
+
+      expect(validateQuestions(rows, scopeChosenOnScreen: true), isEmpty);
     });
 
     test('fewer than four options is refused, naming the line', () {
