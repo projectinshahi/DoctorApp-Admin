@@ -17,70 +17,108 @@ import 'question_import_tab.dart';
 /// PDF, then the questions CSV, then the review before anything publishes.
 /// Two screens that drift apart would be two different answers to "what did
 /// I upload".
-class QuestionBankScreen extends StatelessWidget {
+///
+/// **No TabBarView here, deliberately.** The dashboard puts this inside a
+/// scroll view, so the height is unbounded, and a TabBarView in unbounded
+/// height lays out nothing at all - which is exactly what it did. One child
+/// at a time, sized by its own content, is what survives that.
+class QuestionBankScreen extends StatefulWidget {
   final int? initialCourseId;
   final int? initialCourseTypeId;
+
+  /// The three panels, injectable so the layout can be tested without the
+  /// network behind the real ones.
+  final Widget? quizzes;
+  final Widget? mockTests;
+  final Widget? import;
 
   const QuestionBankScreen({
     super.key,
     this.initialCourseId,
     this.initialCourseTypeId,
+    this.quizzes,
+    this.mockTests,
+    this.import,
   });
 
   @override
+  State<QuestionBankScreen> createState() => _QuestionBankScreenState();
+}
+
+class _QuestionBankScreenState extends State<QuestionBankScreen> {
+  int _tab = 0;
+
+  static const _labels = ['Quizzes', 'Mock tests', 'Import from CSV'];
+  static const _icons = [
+    Icons.quiz_outlined,
+    Icons.fact_check_outlined,
+    Icons.upload_file_rounded,
+  ];
+
+  @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: LmsColors.border)),
-            ),
-            child: const TabBar(
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              labelColor: LmsColors.primary,
-              unselectedLabelColor: LmsColors.textGrey,
-              indicatorColor: LmsColors.primary,
-              labelStyle:
-                  TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
-              unselectedLabelStyle:
-                  TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-              tabs: [
-                Tab(
-                    height: 46,
-                    icon: Icon(Icons.quiz_outlined, size: 17),
-                    iconMargin: EdgeInsets.zero,
-                    text: 'Quizzes'),
-                Tab(
-                    height: 46,
-                    icon: Icon(Icons.fact_check_outlined, size: 17),
-                    iconMargin: EdgeInsets.zero,
-                    text: 'Mock tests'),
-                Tab(
-                    height: 46,
-                    icon: Icon(Icons.upload_file_rounded, size: 17),
-                    iconMargin: EdgeInsets.zero,
-                    text: 'Import from CSV'),
-              ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: LmsColors.border)),
+          ),
+          child: Row(
+            children: [
+              for (var i = 0; i < _labels.length; i++) _tabButton(i),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _panel(),
+      ],
+    );
+  }
+
+  Widget _tabButton(int index) {
+    final selected = index == _tab;
+    final colour = selected ? LmsColors.primary : LmsColors.textGrey;
+
+    return InkWell(
+      onTap: () => setState(() => _tab = index),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: selected ? LmsColors.primary : Colors.transparent,
+              width: 2,
             ),
           ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                CourseQuizScreen(
-                  initialCourseId: initialCourseId,
-                  initialCourseTypeId: initialCourseTypeId,
-                ),
-                const TestListScreen(),
-                const QuestionImportTab(),
-              ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_icons[index], size: 16, color: colour),
+            const SizedBox(width: 7),
+            Text(
+              _labels[index],
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                color: colour,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+
+  Widget _panel() => switch (_tab) {
+        0 =>
+          widget.quizzes ??
+              CourseQuizScreen(
+                initialCourseId: widget.initialCourseId,
+                initialCourseTypeId: widget.initialCourseTypeId,
+              ),
+        1 => widget.mockTests ?? const TestListScreen(),
+        _ => widget.import ?? const QuestionImportTab(),
+      };
 }
