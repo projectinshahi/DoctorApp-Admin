@@ -562,6 +562,13 @@ class _QuizImportTabState extends State<QuizImportTab> {
           Text(_loadError!,
               style: const TextStyle(fontSize: 12, color: LmsColors.error)),
         ],
+        // Free or premium, draft or published, for the whole upload. They
+        // live with the exam because they are decisions about the file, not
+        // about any one question - a row that differs is tapped below.
+        if (_rows.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          _setAllRow(),
+        ],
       ],
     );
   }
@@ -678,10 +685,19 @@ class _QuizImportTabState extends State<QuizImportTab> {
           TestErrorTable(issues: _issues, nothingWasSaved: blocking > 0),
           const SizedBox(height: 12),
         ],
-        _setAllRow(),
-        const SizedBox(height: 12),
-        for (var i = 0; i < _rows.length; i++) _reviewRow(i),
+        _createRow(blocking),
         const SizedBox(height: 14),
+        for (var i = 0; i < _rows.length; i++) _reviewRow(i),
+      ],
+    );
+  }
+
+  /// The one button, at the top of the review rather than past 148 rows of
+  /// scrolling.
+  Widget _createRow(int blocking) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         if (_importedSoFar != null)
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
